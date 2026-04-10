@@ -1971,29 +1971,79 @@ function renderStyleProfilePreview() {
     if (!loadedBlocks.length) return log("⚠ Сначала загрузи блоки страницы.");
     log(`\n=== ДИАГНОСТИКА CSS БЛОКОВ ===`);
     log(`Всего блоков: ${loadedBlocks.length}`);
+    const profile = getActiveProfile();
+    if (profile) {
+      log(`Палитра профиля: bg=${profile.colors.pageBackground || "-"}, secondary=${profile.colors.secondaryBackground || "-"}, heading=${profile.colors.headingText || "-"}, body=${profile.colors.bodyText || "-"}, accent=${profile.colors.accent || "-"}, accentText=${profile.colors.accentText || "-"}`);
+    } else {
+      log(`⚠ Профиль стилей не найден (getActiveProfile вернул пусто)`);
+    }
+
+    const diag = {
+      variant_id: $("variantId")?.value?.trim() || "",
+      flags: {
+        designerModeEnabled: $("designerModeEnabled")?.checked !== false,
+        strictContrastEnabled: $("strictContrastEnabled")?.checked !== false,
+        spacingHarmonyEnabled: $("spacingHarmonyEnabled")?.checked !== false,
+      },
+      profile: profile ? {
+        colors: profile.colors,
+        fonts: profile.fonts,
+        radius: profile.radius,
+        spacing: profile.spacing,
+      } : null,
+      blocks: [],
+    };
+
     loadedBlocks.forEach((b, i) => {
       const cs = getBlockCssSettings(b);
       const themeKeys = cs ? Object.keys(cs) : [];
       let totalClasses = 0;
       const classNames = [];
+      const indentsKeySet = new Set();
       if (cs) {
         for (const themeData of Object.values(cs)) {
           if (themeData && typeof themeData === "object") {
             const keys = Object.keys(themeData);
             totalClasses += keys.length;
             keys.forEach(k => classNames.push(k));
+            for (const classData of Object.values(themeData)) {
+              if (classData?.indents && typeof classData.indents === "object") {
+                Object.keys(classData.indents).forEach(k => indentsKeySet.add(k));
+              }
+            }
           }
         }
       }
       log(`\n${i + 1}. "${b.name}" (layout_id=${b.layout_id})`);
       log(`   theme: ${themeKeys.join(", ") || "(пусто)"}`);
       log(`   классов: ${totalClasses}`);
+      log(`   indents keys: ${Array.from(indentsKeySet).join(", ") || "(нет)"}`);
       if (classNames.length > 0) {
         classNames.slice(0, 10).forEach(c => log(`     - ${c}`));
         if (classNames.length > 10) log(`     ... и ещё ${classNames.length - 10}`);
       }
+
+      const payload = profile ? buildCssPayloadForBlock(b, profile) : null;
+      const payloadChanges = payload ? countChangesInPayload(payload) : 0;
+      log(`   payload changes: ${payloadChanges}`);
+      diag.blocks.push({
+        block_id: b.block_id,
+        name: b.name,
+        layout_id: b.layout_id,
+        themeKeys,
+        classCount: totalClasses,
+        indentsKeys: Array.from(indentsKeySet),
+        payloadChanges,
+      });
     });
     log(`\n💡 Если у блока 0 классов — у него нет кастомных CSS, но v1.2 всё равно попробует применить стили через банк типичных классов.`);
+
+    const serialized = JSON.stringify(diag, null, 2);
+    log(`\n=== ДИАГ-ПАКЕТ (скопируй и пришли мне) ===\n${serialized.slice(0, 2500)}${serialized.length > 2500 ? "\n... (обрезано в логе)" : ""}`);
+    try {
+      navigator.clipboard?.writeText(serialized);
+      log(`📋 Полный диаг-пакет скопирован в буфер обмена.`);
+    } catch {}
   });
 }
 
