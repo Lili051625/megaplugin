@@ -13,14 +13,28 @@ const log = (msg) => {
 document.querySelectorAll('.tab').forEach(tab => {
   tab.addEventListener('click', () => {
     const target = tab.dataset.tab;
-    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === tab));
-    document.querySelectorAll('.tab-panel').forEach(p => {
-      p.classList.toggle('active', p.id === `tab-${target}`);
-    });
-    // v1.0: обновляем превью стилевого профиля при заходе в настройки
-    if (target === "settings") {
-      renderStyleProfilePreview();
-    }
+    openTab(target);
+  });
+});
+
+function openTab(target) {
+  document.querySelectorAll('.tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === target);
+  });
+  document.querySelectorAll('.tab-panel').forEach(p => {
+    p.classList.toggle('active', p.id === `tab-${target}`);
+  });
+  // v1.0: обновляем превью стилевого профиля при заходе в настройки
+  if (target === "settings") {
+    renderStyleProfilePreview();
+  }
+}
+
+document.querySelectorAll('.tab-jump').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const target = btn.dataset.tabJump;
+    if (!target) return;
+    openTab(target);
   });
 });
 
