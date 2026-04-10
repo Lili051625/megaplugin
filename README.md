@@ -1,0 +1,2 @@
+# megaplugin
+avtomatization
