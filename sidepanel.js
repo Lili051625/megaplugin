@@ -2374,6 +2374,42 @@ function tuneAccentColor(hex) {
   return rgbToHex(tuned.r, tuned.g, tuned.b);
 }
 
+// ---------------- DESIGN INTENT ENGINE ----------------
+// "Интуитивное" распределение палитры по визуальным ролям блока:
+// - base: фон секции
+// - text: текстовые элементы
+// - card: вторичный фон
+// - cta: акцентные зоны (кнопки/призывы)
+// - accent_soft: мягкий акцент без "кричащего" контраста
+function inferVisualIntent(role, className = "") {
+  const c = String(className || "").toLowerCase();
+  if (role === "button") return "cta";
+  if (/__cta$|__offer$|__action$|__lead$|__submit$/.test(c)) return "cta";
+  if (role === "block_root") return "base";
+  if (role === "heading" || role === "subheading" || role === "body_text") return "text";
+  if (role === "accent_element") return "accent_soft";
+  if (role === "card") {
+    if (/faq|question|review|quote|feature|advantage|benefit|service|product/.test(c)) return "accent_soft";
+    return "card";
+  }
+  return "card";
+}
+
+function resolveIntentColors(profile, intent) {
+  const page = profile?.colors?.pageBackground || "#ffffff";
+  const secondary = profile?.colors?.secondaryBackground || page;
+  const accent = tuneAccentColor(profile?.colors?.accent || secondary);
+  const heading = profile?.colors?.headingText || "#0f172a";
+  const body = profile?.colors?.bodyText || "#334155";
+  const accentText = profile?.colors?.accentText || "#ffffff";
+
+  if (intent === "base") return { bg: page, text: body };
+  if (intent === "text") return { bg: null, text: body, heading };
+  if (intent === "cta") return { bg: accent, text: accentText };
+  if (intent === "accent_soft") return { bg: secondary, text: heading };
+  return { bg: secondary, text: body };
+}
+
 // Извлечь альфу из существующего цвета (rgba) — нужно чтобы сохранить
 // прозрачность когда подменяем цвет.
 function extractAlpha(colorStr) {
@@ -2506,7 +2542,9 @@ function buildChangesForRole(role, profile, className = "") {
   const isTextLike = /__title$|__heading$|__name$|__question$|__subtitle$|__sub-?title$|__caption$|__author$|__text$|__desc(?:ription)?$|__answer$/.test(cls);
   const rootBgAllow = /^\.lpc-block$|^\.lp-block(?:-bg|-overlay|_item|-bg_item)?$/.test(cls);
   const { strictContrast } = getDesignerModeFlags();
-  const accentBgHex = tuneAccentColor(profile.colors.accent);
+  const intent = inferVisualIntent(role, className);
+  const intentColors = resolveIntentColors(profile, intent);
+  const accentBgHex = intentColors.bg || tuneAccentColor(profile.colors.accent);
 
   // Цвет фона
   if (role === "block_root" && profile.colors.pageBackground && rootBgAllow) {
@@ -2517,7 +2555,7 @@ function buildChangesForRole(role, profile, className = "") {
     };
   } else if (role === "card" && !isTextLike && (profile.colors.secondaryBackground || profile.colors.pageBackground)) {
     changes.background = {
-      color: hexToRgbString(profile.colors.secondaryBackground || profile.colors.pageBackground),
+      color: hexToRgbString(intentColors.bg || profile.colors.secondaryBackground || profile.colors.pageBackground),
       image: "none",
       bg_type: "solid",
     };
@@ -2539,14 +2577,14 @@ function buildChangesForRole(role, profile, className = "") {
   // Цвет шрифта
   let fontColor = null;
   if (role === "heading" || role === "subheading") {
-    fontColor = profile.colors.headingText;
+    fontColor = intentColors.heading || profile.colors.headingText;
   } else if (role === "button") {
-    fontColor = profile.colors.accentText;
+    fontColor = intentColors.text || profile.colors.accentText;
   } else if (role === "accent_element") {
     // Иконка/цифра — текст контрастный к акценту
-    fontColor = profile.colors.accentText || "#ffffff";
+    fontColor = intentColors.text || profile.colors.accentText || "#ffffff";
   } else if (role === "body_text") {
-    fontColor = profile.colors.bodyText;
+    fontColor = intentColors.text || profile.colors.bodyText;
   }
   if (fontColor) {
     if (!changes.font) changes.font = {};
@@ -2623,11 +2661,14 @@ function buildFallbackChangesFromExistingClass(className, classData, profile) {
   const cardLike = /__card$|__item(?:-content)?$|__item-content-card$|__box$|__cell$|__items$|__content$/.test(c);
   const rootLike = /^\.lpc-block$|^\.lp-block(?:-bg|-overlay|_item|-bg_item)?$/.test(c);
   const { strictContrast } = getDesignerModeFlags();
+  const guessedRole = headingLike ? "heading" : (textLike ? "body_text" : (cardLike ? "card" : "other"));
+  const intent = inferVisualIntent(guessedRole, className);
+  const intentColors = resolveIntentColors(profile, intent);
   const accentBgHex = tuneAccentColor(profile?.colors?.accent);
 
   // Если у класса есть font — почти всегда можно безопасно обновить цвет+семейство.
   if (classData.font && typeof classData.font === "object") {
-    const color = headingLike ? profile?.colors?.headingText : profile?.colors?.bodyText;
+    const color = headingLike ? (intentColors.heading || profile?.colors?.headingText) : (intentColors.text || profile?.colors?.bodyText);
     if (color) {
       if (!out.font) out.font = {};
       out.font.color = hexToRgbString(color);
@@ -2647,10 +2688,10 @@ function buildFallbackChangesFromExistingClass(className, classData, profile) {
   // Фон трогаем только если класс не текстовый.
   if (!textLike && classData.background && typeof classData.background === "object") {
     const bg = /__button$|__btn$|__link$/.test(c)
-      ? accentBgHex
+      ? (intentColors.bg || accentBgHex)
       : (cardLike || (!rootLike && !textLike))
-      ? (profile?.colors?.secondaryBackground || profile?.colors?.pageBackground)
-      : profile?.colors?.pageBackground;
+      ? (intentColors.bg || profile?.colors?.secondaryBackground || profile?.colors?.pageBackground)
+      : (intentColors.bg || profile?.colors?.pageBackground);
     if (bg) {
       out.background = {
         ...(classData.background || {}),
