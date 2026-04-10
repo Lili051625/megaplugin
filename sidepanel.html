@@ -1,0 +1,981 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MegaGroup AI Filler</title>
+    <style>
+      * { box-sizing: border-box; -webkit-font-smoothing: antialiased; }
+      html, body { height: 100%; }
+      body {
+        font-family: -apple-system, "SF Pro Display", "Segoe UI", Roboto, Arial, sans-serif;
+        margin: 0; padding: 0;
+        background: #f8fafc;
+        color: #0f172a;
+        font-size: 13px;
+        line-height: 1.5;
+        display: flex; flex-direction: column; min-height: 100vh;
+      }
+
+      /* Header */
+      .app-header { padding: 14px 16px 0 16px; background: #f8fafc; }
+      .app-title {
+        font-size: 15px; font-weight: 700; margin: 0;
+        display: flex; align-items: center; gap: 8px; color: #0f172a;
+      }
+      .app-title .version {
+        font-size: 11px; font-weight: 500; color: #94a3b8;
+        background: #e2e8f0; padding: 2px 7px; border-radius: 999px;
+      }
+      .app-subtitle { font-size: 11px; color: #64748b; margin: 3px 0 0 0; }
+
+      /* Tabs */
+      .tabs {
+        display: flex; gap: 4px;
+        padding: 12px 16px 0 16px; background: #f8fafc;
+        position: sticky; top: 0; z-index: 10;
+        border-bottom: 1px solid #e2e8f0;
+      }
+      .tab {
+        flex: 1; padding: 9px 8px; border: 0; background: transparent;
+        font-size: 12px; font-weight: 600; color: #64748b; cursor: pointer;
+        border-bottom: 2px solid transparent; transition: all 0.15s;
+        font-family: inherit;
+        display: flex; align-items: center; justify-content: center; gap: 5px;
+        white-space: nowrap;
+      }
+      .tab:hover { color: #334155; }
+      .tab.active { color: #2563eb; border-bottom-color: #2563eb; }
+
+      .tab-panel { display: none; padding: 16px; flex: 1; }
+      .tab-panel.active { display: block; }
+
+      /* Cards */
+      .card {
+        background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
+        padding: 14px; margin-bottom: 12px;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+      }
+      .card-label {
+        display: block; font-weight: 600; margin-bottom: 6px;
+        color: #334155; font-size: 12px;
+      }
+      .card-hint { font-size: 11px; color: #94a3b8; margin-top: 5px; line-height: 1.4; }
+      .card-warn {
+        font-size: 11px; color: #b45309; margin-top: 5px;
+        background: #fef3c7; padding: 6px 8px; border-radius: 6px;
+        border-left: 3px solid #f59e0b;
+      }
+
+      /* Mode switcher */
+      .mode-switch {
+        display: flex; flex-direction: column; gap: 4px;
+      }
+      .mode-option {
+        display: flex; align-items: flex-start; gap: 10px;
+        padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px;
+        cursor: pointer; transition: all 0.15s;
+        background: #fff;
+      }
+      .mode-option:hover { border-color: #cbd5e1; background: #f8fafc; }
+      .mode-option.active {
+        border-color: #2563eb; background: #eff6ff;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
+      }
+      .mode-option input[type="radio"] {
+        accent-color: #2563eb; margin-top: 2px; flex-shrink: 0;
+      }
+      .mode-option .mode-title {
+        font-weight: 600; font-size: 12px; color: #0f172a;
+      }
+      .mode-option .mode-desc {
+        font-size: 11px; color: #64748b; margin-top: 2px; line-height: 1.4;
+      }
+
+      /* Inputs */
+      input[type="text"], input[type="password"], textarea, select {
+        width: 100%; padding: 9px 11px;
+        border: 1px solid #e2e8f0; border-radius: 8px;
+        font-size: 13px; font-family: inherit;
+        background: #fff; color: #0f172a;
+        transition: border-color 0.15s, box-shadow 0.15s;
+      }
+      input:focus, textarea:focus {
+        outline: 0; border-color: #2563eb;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+      }
+      textarea { resize: vertical; min-height: 80px; line-height: 1.5; }
+      textarea.large { min-height: 130px; }
+
+      /* Buttons */
+      button {
+        background: #2563eb; color: #fff; border: 0; border-radius: 8px;
+        padding: 10px 14px; font-size: 13px; font-weight: 600;
+        font-family: inherit; cursor: pointer; transition: all 0.15s; width: 100%;
+      }
+      button:hover { background: #1d4ed8; transform: translateY(-1px); box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25); }
+      button:active { transform: translateY(0); }
+      button:disabled {
+        background: #cbd5e1; color: #94a3b8; cursor: not-allowed;
+        transform: none; box-shadow: none;
+      }
+      button.secondary { background: #f1f5f9; color: #334155; }
+      button.secondary:hover { background: #e2e8f0; box-shadow: 0 2px 6px rgba(15, 23, 42, 0.08); }
+      button.success { background: #059669; }
+      button.success:hover { background: #047857; box-shadow: 0 2px 6px rgba(5, 150, 105, 0.25); }
+      button.danger { background: #fff; color: #dc2626; border: 1px solid #fecaca; }
+      button.danger:hover { background: #fef2f2; border-color: #fca5a5; }
+      button.small-btn { padding: 6px 10px; font-size: 11px; font-weight: 500; width: auto; }
+      button.tiny-btn { padding: 4px 8px; font-size: 10px; font-weight: 500; width: auto; }
+
+      .row { display: flex; gap: 8px; }
+      .row button { flex: 1; }
+      .row + .row { margin-top: 8px; }
+
+      .input-group { display: flex; gap: 6px; }
+      .input-group input { flex: 1; }
+      .input-group button { width: auto; flex-shrink: 0; padding: 9px 12px; }
+
+      /* Checkbox */
+      .check {
+        display: flex; align-items: center; gap: 9px;
+        font-weight: 500; color: #334155; cursor: pointer; padding: 2px 0;
+      }
+      .check input { width: 16px; height: 16px; cursor: pointer; accent-color: #2563eb; }
+
+      /* Draft bar */
+      .draft-bar {
+        position: sticky; top: 44px; background: #fff;
+        border: 1px solid #e2e8f0; border-radius: 12px;
+        padding: 10px 12px; margin-bottom: 12px;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03); z-index: 5;
+      }
+      .draft-bar-status {
+        font-size: 12px; color: #64748b;
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      }
+      .draft-bar-status b { color: #059669; font-size: 14px; }
+      .draft-bar-actions { display: none; gap: 6px; margin-top: 8px; }
+      .draft-bar-actions button { flex: 1; padding: 8px 12px; font-size: 12px; }
+      .draft-bar.has-draft .draft-bar-actions { display: flex; }
+
+      /* Blocks header */
+      .blocks-header {
+        display: flex; justify-content: space-between; align-items: center;
+        margin-bottom: 8px; padding: 0 2px;
+      }
+      .blocks-header-title {
+        font-size: 11px; font-weight: 600; color: #64748b;
+        text-transform: uppercase; letter-spacing: 0.3px;
+      }
+      .blocks-header-count { font-size: 11px; color: #94a3b8; }
+      .blocks-actions { display: flex; gap: 6px; margin-bottom: 10px; }
+      .blocks-actions button { flex: 1; padding: 7px 10px; font-size: 11px; font-weight: 500; }
+
+      /* Block cards */
+      .block-item {
+        background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
+        margin-bottom: 6px; overflow: hidden; transition: border-color 0.15s;
+      }
+      .block-item:hover { border-color: #cbd5e1; }
+      .block-item.has-draft { border-color: #10b981; background: #f0fdf4; }
+      .block-item.expanded { border-color: #2563eb; }
+
+      .block-header {
+        padding: 10px 12px; cursor: pointer;
+        display: flex; align-items: center; gap: 8px; user-select: none;
+      }
+      .block-chevron {
+        color: #94a3b8; font-size: 12px;
+        transition: transform 0.15s; flex-shrink: 0;
+      }
+      .block-item.expanded .block-chevron { transform: rotate(90deg); }
+      .block-main { flex: 1; min-width: 0; }
+      .block-name {
+        font-weight: 600; font-size: 12px; color: #0f172a;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .block-meta { font-size: 10px; color: #94a3b8; margin-top: 2px; }
+      .block-badges { display: flex; gap: 4px; flex-shrink: 0; }
+      .block-badge {
+        font-size: 9px; font-weight: 700; padding: 2px 6px;
+        border-radius: 999px; text-transform: uppercase; letter-spacing: 0.3px;
+      }
+      .badge-type { background: #eff6ff; color: #2563eb; }
+      .badge-draft { background: #10b981; color: #fff; }
+      .badge-list { background: #fef3c7; color: #b45309; }
+
+      .block-body {
+        display: none; padding: 0 12px 12px 12px;
+        border-top: 1px solid #f1f5f9;
+      }
+      .block-item.expanded .block-body { display: block; }
+
+      .block-fields { padding: 10px 0 8px 0; font-size: 11px; color: #475569; }
+      .block-fields-title {
+        font-size: 10px; font-weight: 600; color: #94a3b8;
+        text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 4px;
+      }
+      .block-skipped { font-size: 10px; color: #b45309; margin-top: 4px; }
+      .block-hint-list {
+        font-size: 11px; color: #2563eb; background: #eff6ff;
+        padding: 6px 9px; border-radius: 6px; margin-top: 6px;
+      }
+      .block-brief {
+        margin-top: 8px; min-height: 48px;
+        font-size: 11px; padding: 7px 9px;
+      }
+      .block-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+      .block-actions button { flex: 1 1 auto; padding: 6px 8px; font-size: 11px; }
+
+      /* Draft editor (редактируемое превью) */
+      .draft-editor {
+        margin-top: 10px; padding: 10px;
+        background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px;
+      }
+      .draft-editor-title {
+        font-size: 10px; font-weight: 700; color: #065f46;
+        text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 8px;
+      }
+      .draft-field {
+        margin-bottom: 10px;
+      }
+      .draft-field:last-child { margin-bottom: 0; }
+      .draft-field-header {
+        display: flex; justify-content: space-between; align-items: center;
+        margin-bottom: 4px;
+      }
+      .draft-field-name {
+        font-size: 11px; font-weight: 600; color: #065f46;
+      }
+      .draft-field-actions { display: flex; gap: 4px; }
+      .draft-field textarea {
+        width: 100%; font-size: 12px; padding: 8px;
+        min-height: 60px; background: #fff; border: 1px solid #86efac;
+        color: #0f172a; font-family: inherit; line-height: 1.5;
+      }
+      .draft-field textarea:focus { border-color: #059669; box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.15); }
+      .draft-field textarea.tall { min-height: 120px; }
+
+      /* Draft list editor (для полей со списками) */
+      .draft-list-item {
+        background: #fff; border: 1px solid #86efac; border-radius: 6px;
+        padding: 8px; margin-bottom: 6px;
+      }
+      .draft-list-item-title {
+        font-size: 10px; font-weight: 600; color: #059669; margin-bottom: 4px;
+        display: flex; justify-content: space-between;
+      }
+      .draft-list-item textarea {
+        min-height: 40px; font-size: 11px;
+      }
+      .draft-list-subfield { margin-bottom: 6px; }
+      .draft-list-subfield:last-child { margin-bottom: 0; }
+      .draft-list-subfield-label {
+        font-size: 10px; color: #64748b; margin-bottom: 2px;
+      }
+
+      /* Log */
+      .log {
+        background: #0f172a; color: #86efac;
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        font-size: 11px; padding: 12px; border-radius: 10px;
+        white-space: pre-wrap; line-height: 1.55;
+        min-height: 300px; max-height: 600px; overflow-y: auto;
+      }
+      .log::-webkit-scrollbar { width: 8px; }
+      .log::-webkit-scrollbar-track { background: transparent; }
+      .log::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+
+      /* Empty state */
+      .empty { text-align: center; padding: 32px 16px; color: #94a3b8; }
+      .empty-icon { font-size: 32px; margin-bottom: 8px; }
+      .empty-text { font-size: 12px; }
+
+      ::-webkit-scrollbar { width: 10px; }
+      ::-webkit-scrollbar-track { background: #f1f5f9; }
+      ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 5px; }
+      ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+      /* v0.8: мини-плюсик между блоками */
+      .insert-slot {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 14px;
+        margin: -3px 0;
+        opacity: 0;
+        transition: opacity 0.15s, height 0.15s;
+        position: relative;
+      }
+      .insert-slot:hover,
+      .blocks-wrap:hover .insert-slot {
+        opacity: 1;
+      }
+      .insert-slot:hover {
+        height: 24px;
+      }
+      .insert-slot button {
+        width: 22px; height: 22px;
+        padding: 0;
+        border-radius: 50%;
+        background: #fff;
+        border: 1.5px solid #2563eb;
+        color: #2563eb;
+        font-size: 14px;
+        font-weight: 700;
+        line-height: 1;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .insert-slot button:hover {
+        background: #2563eb;
+        color: #fff;
+        transform: scale(1.1);
+      }
+
+      /* v0.8: модалка библиотеки блоков */
+      .modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.6);
+        z-index: 100;
+        align-items: flex-start;
+        justify-content: center;
+        padding: 16px;
+        overflow-y: auto;
+      }
+      .modal-overlay.open { display: flex; }
+      .modal-window {
+        background: #fff;
+        border-radius: 14px;
+        width: 100%;
+        max-width: 520px;
+        margin: auto;
+        box-shadow: 0 20px 50px rgba(15, 23, 42, 0.4);
+        display: flex;
+        flex-direction: column;
+        max-height: calc(100vh - 32px);
+      }
+      .modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 16px;
+        border-bottom: 1px solid #e2e8f0;
+        gap: 8px;
+      }
+      .modal-title {
+        font-size: 14px;
+        font-weight: 700;
+        color: #0f172a;
+      }
+      .modal-subtitle {
+        font-size: 11px;
+        color: #64748b;
+        margin-top: 2px;
+      }
+      .modal-close {
+        background: #f1f5f9;
+        border: 0;
+        width: 28px; height: 28px;
+        border-radius: 50%;
+        color: #64748b;
+        font-size: 16px;
+        line-height: 1;
+        cursor: pointer;
+        padding: 0;
+      }
+      .modal-close:hover { background: #e2e8f0; }
+      .modal-body {
+        padding: 14px 16px;
+        overflow-y: auto;
+        flex: 1;
+      }
+      .modal-back {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: transparent;
+        color: #2563eb;
+        font-size: 12px;
+        font-weight: 500;
+        padding: 6px 0;
+        margin-bottom: 10px;
+        width: auto;
+        cursor: pointer;
+        border: 0;
+      }
+      .modal-back:hover { color: #1d4ed8; background: transparent; }
+
+      /* Сетка папок */
+      .folder-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+      }
+      .folder-card {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 12px;
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        gap: 8px;
+        transition: all 0.15s;
+      }
+      .folder-card:hover {
+        background: #fff;
+        border-color: #2563eb;
+        box-shadow: 0 2px 8px rgba(37, 99, 235, 0.12);
+        transform: translateY(-1px);
+      }
+      .folder-icon {
+        width: 32px; height: 32px;
+        background: #eff6ff;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+      .folder-icon img { width: 20px; height: 20px; }
+      .folder-name {
+        font-size: 12px;
+        font-weight: 600;
+        color: #0f172a;
+        line-height: 1.3;
+      }
+
+      /* Список шаблонов */
+      .layout-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .layout-card {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 8px;
+        cursor: pointer;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        transition: all 0.15s;
+      }
+      .layout-card:hover {
+        background: #fff;
+        border-color: #2563eb;
+        box-shadow: 0 2px 8px rgba(37, 99, 235, 0.12);
+      }
+      .layout-preview {
+        width: 80px;
+        height: 54px;
+        object-fit: cover;
+        border-radius: 6px;
+        background: #e2e8f0;
+        flex-shrink: 0;
+      }
+      .layout-name {
+        font-size: 12px;
+        font-weight: 600;
+        color: #0f172a;
+        line-height: 1.3;
+      }
+
+      .modal-loading {
+        text-align: center;
+        padding: 24px;
+        color: #94a3b8;
+        font-size: 12px;
+      }
+
+      /* v0.9: модалка пресетов */
+      .preset-intro {
+        font-size: 12px;
+        color: #64748b;
+        line-height: 1.5;
+        padding: 10px 12px;
+        background: #f0f9ff;
+        border-radius: 8px;
+        margin-bottom: 14px;
+        border-left: 3px solid #2563eb;
+      }
+      .preset-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .preset-card {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 12px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        transition: all 0.15s;
+      }
+      .preset-card:hover {
+        background: #fff;
+        border-color: #2563eb;
+        box-shadow: 0 2px 10px rgba(37, 99, 235, 0.12);
+        transform: translateY(-1px);
+      }
+      .preset-icon {
+        font-size: 28px;
+        line-height: 1;
+        flex-shrink: 0;
+      }
+      .preset-info { flex: 1; min-width: 0; }
+      .preset-name {
+        font-size: 13px;
+        font-weight: 700;
+        color: #0f172a;
+      }
+      .preset-desc {
+        font-size: 11px;
+        color: #64748b;
+        margin-top: 2px;
+      }
+      .preset-meta {
+        font-size: 10px;
+        color: #94a3b8;
+        margin-top: 4px;
+        font-weight: 500;
+      }
+      .preset-arrow {
+        color: #94a3b8;
+        font-size: 18px;
+        flex-shrink: 0;
+      }
+      .preset-loading {
+        text-align: center;
+        padding: 28px 16px;
+        color: #64748b;
+        font-size: 12px;
+      }
+      .preset-title {
+        font-size: 14px;
+        font-weight: 700;
+        color: #0f172a;
+        margin-bottom: 4px;
+      }
+      .preset-stats {
+        font-size: 11px;
+        color: #64748b;
+        margin-bottom: 12px;
+      }
+      .preset-stats-warn {
+        color: #b45309;
+        font-weight: 600;
+      }
+      .preset-warn {
+        background: #fef3c7;
+        border-left: 3px solid #f59e0b;
+        padding: 8px 10px;
+        border-radius: 6px;
+        font-size: 11px;
+        color: #78350f;
+        line-height: 1.5;
+        margin-bottom: 14px;
+      }
+      .preset-sections-title {
+        font-size: 10px;
+        font-weight: 700;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin: 16px 0 8px 0;
+      }
+      .preset-sections {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .section-card {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 10px;
+      }
+      .section-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+      .section-number {
+        background: #2563eb;
+        color: #fff;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        font-weight: 700;
+        flex-shrink: 0;
+      }
+      .section-label {
+        flex: 1;
+        padding: 6px 8px !important;
+        font-size: 12px !important;
+        font-weight: 600;
+      }
+      .section-topic {
+        width: 100%;
+        padding: 7px 9px !important;
+        font-size: 11px !important;
+        min-height: 40px !important;
+        margin-bottom: 8px;
+      }
+      .section-blocks {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding-left: 4px;
+      }
+      .resolved-block {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        padding: 4px 6px;
+        border-radius: 4px;
+      }
+      .resolved-block.resolved-ok { color: #0f172a; background: #fff; }
+      .resolved-block.resolved-missing { color: #dc2626; background: #fef2f2; }
+      .resolved-status {
+        font-weight: 700;
+        font-size: 11px;
+        flex-shrink: 0;
+      }
+      .resolved-ok .resolved-status { color: #059669; }
+      .resolved-missing .resolved-status { color: #dc2626; }
+      .resolved-name { flex: 1; }
+      .resolved-score {
+        color: #94a3b8;
+        font-size: 10px;
+      }
+      .resolved-match {
+        font-size: 10px;
+        color: #64748b;
+        margin-left: 18px;
+        margin-top: 2px;
+      }
+      .preset-options {
+        margin-top: 14px;
+        padding: 10px;
+        background: #f0fdf4;
+        border-radius: 8px;
+        border-left: 3px solid #10b981;
+      }
+      .preset-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 14px;
+        position: sticky;
+        bottom: 0;
+        background: #fff;
+        padding: 10px 0 0 0;
+        border-top: 1px solid #e2e8f0;
+      }
+      .preset-actions button { flex: 1; }
+
+      /* v1.0: превью стилевого профиля */
+      .style-profile {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 12px;
+      }
+      .style-profile-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+      }
+      .style-profile-domain {
+        font-size: 11px;
+        font-weight: 700;
+        color: #2563eb;
+      }
+      .style-profile-date {
+        font-size: 10px;
+        color: #94a3b8;
+      }
+      .style-section {
+        margin-bottom: 12px;
+      }
+      .style-section:last-child { margin-bottom: 0; }
+      .style-section-title {
+        font-size: 10px;
+        font-weight: 700;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+        margin-bottom: 6px;
+      }
+      .color-swatches {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .color-swatch {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        padding: 4px 8px 4px 4px;
+        font-size: 10px;
+      }
+      .color-swatch-box {
+        width: 22px;
+        height: 22px;
+        border-radius: 4px;
+        border: 1px solid rgba(0,0,0,0.08);
+        flex-shrink: 0;
+      }
+      .color-swatch-info {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.2;
+      }
+      .color-swatch-label {
+        color: #64748b;
+        font-size: 9px;
+        text-transform: uppercase;
+        letter-spacing: 0.2px;
+      }
+      .color-swatch-value {
+        color: #0f172a;
+        font-weight: 600;
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 10px;
+      }
+      .palette-row {
+        display: flex;
+        gap: 4px;
+        margin-top: 4px;
+      }
+      .palette-chip {
+        width: 24px; height: 24px;
+        border-radius: 4px;
+        border: 1px solid rgba(0,0,0,0.08);
+      }
+      .style-row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        color: #475569;
+        padding: 3px 0;
+      }
+      .style-row b { color: #0f172a; }
+      .style-button-preview {
+        display: inline-block;
+        margin-top: 6px;
+        font-size: 11px;
+        font-weight: 600;
+        text-align: center;
+        padding: 8px 16px;
+      }
+      .style-empty {
+        text-align: center;
+        padding: 14px;
+        font-size: 11px;
+        color: #94a3b8;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-header">
+      <h1 class="app-title">
+        🪄 MegaGroup AI Filler
+        <span class="version">v1.3</span>
+      </h1>
+      <p class="app-subtitle">Автогенерация и правки текстов лендинга через Gemini</p>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="work">📋 Блоки</button>
+      <button class="tab" data-tab="settings">⚙️ Настройки</button>
+      <button class="tab" data-tab="logs">📜 Логи</button>
+    </div>
+
+    <!-- ==================== TAB: WORK ==================== -->
+    <div class="tab-panel active" id="tab-work">
+
+      <!-- Режим работы -->
+      <div class="card">
+        <label class="card-label">Режим работы</label>
+        <div class="mode-switch" id="modeSwitch">
+          <label class="mode-option active" data-mode="generate">
+            <input type="radio" name="mode" value="generate" checked />
+            <div>
+              <div class="mode-title">✨ Сгенерировать с нуля</div>
+              <div class="mode-desc">Пишешь ТЗ — Gemini создаёт все тексты страницы</div>
+            </div>
+          </label>
+          <label class="mode-option" data-mode="layout">
+            <input type="radio" name="mode" value="layout" />
+            <div>
+              <div class="mode-title">📝 Разложить мои тексты</div>
+              <div class="mode-desc">Даёшь готовые тексты — Gemini только распределяет по блокам, ничего не переписывает</div>
+            </div>
+          </label>
+          <label class="mode-option" data-mode="edits">
+            <input type="radio" name="mode" value="edits" />
+            <div>
+              <div class="mode-title">✏️ Точечные правки</div>
+              <div class="mode-desc">Комментарии клиента — находит нужные места в текущих текстах и правит</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <!-- Поле ввода — меняется под режим -->
+      <div class="card">
+        <label class="card-label" id="briefLabel" for="brief">Техническое задание</label>
+        <textarea id="brief" class="large" placeholder="Ниша, услуги, тон, ключевые слова, целевая аудитория..."></textarea>
+        <div class="card-hint" id="briefHint">Применяется ко всей странице.</div>
+      </div>
+
+      <div class="card">
+        <label class="check">
+          <input type="checkbox" id="dryRun" checked />
+          <span>Сухой прогон (сначала в черновик)</span>
+        </label>
+        <div class="card-warn">⚠ С галочкой: результат попадает в черновик, можно проверить и отредактировать. Без галочки: сразу пишется в блоки.</div>
+      </div>
+
+      <div class="row">
+        <button id="loadBtn">📥 Загрузить блоки</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="fillBtn" disabled>✨ Сгенерировать всю страницу</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="secondary" id="addBlockBtn" disabled>➕ Добавить блок</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="secondary" id="presetsBtn" disabled>📄 Создать страницу из пресета</button>
+      </div>
+
+      <div class="draft-bar" id="draftBar" style="margin-top:14px">
+        <div class="draft-bar-status">
+          <span>В черновике: <b id="draftCount">0</b></span>
+          <span id="draftHint" style="font-size:11px;color:#94a3b8">пусто</span>
+        </div>
+        <div class="draft-bar-actions">
+          <button class="success" id="applyBtn">💾 Применить черновик</button>
+          <button class="danger" id="clearDraftBtn">🗑 Очистить</button>
+        </div>
+      </div>
+
+      <div class="blocks-header">
+        <span class="blocks-header-title">Блоки страницы</span>
+        <span class="blocks-header-count" id="blocksCount"></span>
+      </div>
+      <div class="blocks-actions" id="blocksActions" style="display:none">
+        <button class="secondary small-btn" id="expandAllBtn">Раскрыть всё</button>
+        <button class="secondary small-btn" id="collapseAllBtn">Свернуть всё</button>
+      </div>
+      <div id="blocks" class="blocks-wrap">
+        <div class="empty">
+          <div class="empty-icon">📋</div>
+          <div class="empty-text">Нажми «Загрузить блоки» чтобы начать</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== TAB: SETTINGS ==================== -->
+    <div class="tab-panel" id="tab-settings">
+      <div class="card">
+        <label class="card-label" for="apiKey">Gemini API key</label>
+        <input type="password" id="apiKey" placeholder="AIza..." />
+        <div class="card-hint">Получить: <b>aistudio.google.com/apikey</b>. Хранится локально.</div>
+      </div>
+      <div class="card">
+        <label class="card-label" for="model">Модель Gemini</label>
+        <input type="text" id="model" placeholder="gemini-3.1-flash-lite-preview" />
+      </div>
+      <div class="card">
+        <label class="card-label" for="variantId">Variant ID страницы</label>
+        <div class="input-group">
+          <input type="text" id="variantId" placeholder="определяется автоматически" />
+          <button class="secondary" id="autoVariantBtn">🔍 Авто</button>
+        </div>
+        <div class="card-hint">Обычно определяется сам.</div>
+      </div>
+
+      <!-- v1.0: Стилевой профиль клиента -->
+      <div class="card">
+        <label class="card-label">🎨 Стилевой профиль клиента</label>
+        <div class="card-hint" style="margin-bottom:10px">Снимает цвета, шрифты, скругления и отступы с главной страницы клиента. Профиль сохраняется по домену.</div>
+        <div class="input-group">
+          <input type="text" id="styleSourceUrl" placeholder="https://сайт-клиента.ru/" />
+          <button class="secondary" id="styleSnapBtn">🎨 Снять</button>
+        </div>
+        <div class="card-hint">Оставь пустым — расширение возьмёт корень домена редактора.</div>
+        <div id="styleProfilePreview" style="margin-top:12px"></div>
+      </div>
+    </div>
+
+    <!-- ==================== TAB: LOGS ==================== -->
+    <div class="tab-panel" id="tab-logs">
+      <div class="card" style="padding: 8px;">
+        <div id="log" class="log">Готов к работе.
+</div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="secondary small-btn" id="clearLogBtn" style="width:auto;margin-left:auto">🗑 Очистить логи</button>
+      </div>
+    </div>
+
+    <!-- ==================== МОДАЛКА: БИБЛИОТЕКА БЛОКОВ ==================== -->
+    <div class="modal-overlay" id="libraryModal">
+      <div class="modal-window">
+        <div class="modal-header">
+          <div>
+            <div class="modal-title" id="libraryTitle">Добавить блок</div>
+            <div class="modal-subtitle" id="librarySubtitle">Выбери категорию</div>
+          </div>
+          <button class="modal-close" id="libraryClose">✕</button>
+        </div>
+        <div class="modal-body" id="libraryBody">
+          <div class="modal-loading">Загрузка...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== МОДАЛКА: ПРЕСЕТЫ СТРАНИЦ ==================== -->
+    <div class="modal-overlay" id="presetsModal">
+      <div class="modal-window">
+        <div class="modal-header">
+          <div>
+            <div class="modal-title">Создать страницу из пресета</div>
+            <div class="modal-subtitle">Готовые раскладки блоков</div>
+          </div>
+          <button class="modal-close" id="presetsClose">✕</button>
+        </div>
+        <div class="modal-body" id="presetsBody">
+          <div class="modal-loading">Загрузка...</div>
+        </div>
+      </div>
+    </div>
+
+    <script src="sidepanel.js"></script>
+  </body>
+</html>

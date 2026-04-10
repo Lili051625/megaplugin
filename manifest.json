@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "MegaGroup AI Filler",
+  "version": "1.3.0",
+  "description": "Автозаполнение блоков лендинга MegaGroup текстом от Gemini по вашему ТЗ.",
+  "permissions": ["storage", "sidePanel", "activeTab", "scripting"],
+  "host_permissions": [
+    "*://*/-/cms/v2/lp/*",
+    "https://generativelanguage.googleapis.com/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "side_panel": { "default_path": "sidepanel.html" },
+  "action": { "default_title": "MegaGroup AI Filler" },
+  "content_scripts": [
+    {
+      "matches": ["*://*/-/cms/v1/lp/editor/*"],
+      "js": ["hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true
+    },
+    {
+      "matches": ["*://*/-/cms/v1/lp/editor/*"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
