@@ -13,14 +13,28 @@ const log = (msg) => {
 document.querySelectorAll('.tab').forEach(tab => {
   tab.addEventListener('click', () => {
     const target = tab.dataset.tab;
-    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === tab));
-    document.querySelectorAll('.tab-panel').forEach(p => {
-      p.classList.toggle('active', p.id === `tab-${target}`);
-    });
-    // v1.0: обновляем превью стилевого профиля при заходе в настройки
-    if (target === "settings") {
-      renderStyleProfilePreview();
-    }
+    openTab(target);
+  });
+});
+
+function openTab(target) {
+  document.querySelectorAll('.tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === target);
+  });
+  document.querySelectorAll('.tab-panel').forEach(p => {
+    p.classList.toggle('active', p.id === `tab-${target}`);
+  });
+  // v1.0: обновляем превью стилевого профиля при заходе в настройки
+  if (target === "settings") {
+    renderStyleProfilePreview();
+  }
+}
+
+document.querySelectorAll('.tab-jump').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const target = btn.dataset.tabJump;
+    if (!target) return;
+    openTab(target);
   });
 });
 
@@ -2036,21 +2050,20 @@ $("styleSnapBtn")?.addEventListener("click", async () => {
 function classifyCssClass(className) {
   const c = (className || "").toLowerCase();
   // Корневой контейнер блока — пустая строка или ".lp-block-..."
-  if (c === "" || /^\.lp-block(?:-bg|-overlay|_item|-bg_item)?$/.test(c)) return "block_root";
+  if (c === "" || /^\.lp-block(?:-bg|-overlay|_item|-bg_item)?$/.test(c) || c === ".lpc-block") return "block_root";
+  if (/^\.lpc-.+(?:__wrap|__wrap-box|__container|__holder)$/.test(c)) return "block_root";
   // Заголовки
-  if (/__title$|__heading$|__name$/.test(c)) return "heading";
+  if (/__title$|__heading$|__name$|__question$/.test(c)) return "heading";
   // Подзаголовки и второстепенные тексты
   if (/__subtitle$|__sub-?title$|__caption$|__author$/.test(c)) return "subheading";
   // Описания, тексты, ответы
   if (/__text$|__desc(?:ription)?$|__answer$|__content$/.test(c)) return "body_text";
   // Карточки, элементы, контейнеры контента
-  if (/__card$|__item(?:-content)?$|__box$|__cell$/.test(c)) return "card";
+  if (/__card$|__item(?:-content)?$|__item-content-card$|__box$|__cell$|__items$/.test(c)) return "card";
   // Кнопки
   if (/__button$|__btn$|__link$/.test(c)) return "button";
   // Иконки и цифры (часто это акцентные элементы — кружочки, кружки с цифрами и т.д.)
   if (/__icon$|__number$|__num$|__counter$|__index$|__step-num$/.test(c)) return "accent_element";
-  // Вопросы (специфика FAQ)
-  if (/__question$/.test(c)) return "heading";
   return "other";
 }
 
@@ -2252,13 +2265,38 @@ function buildChangesForRole(role, profile) {
     changes.font.family = fontFamilyWithFallback(targetFamily);
   }
 
+  // Размеры и жирность шрифта из профиля (если есть)
+  if (role === "heading") {
+    if (profile.fonts.h2Size) {
+      if (!changes.font) changes.font = {};
+      changes.font.size = profile.fonts.h2Size;
+    }
+    if (profile.fonts.headingWeight) {
+      if (!changes.font) changes.font = {};
+      changes.font.weight = String(profile.fonts.headingWeight);
+    }
+  }
+  if (role === "body_text" || role === "subheading") {
+    if (profile.fonts.bodySize) {
+      if (!changes.font) changes.font = {};
+      changes.font.size = profile.fonts.bodySize;
+    }
+    if (profile.fonts.bodyWeight) {
+      if (!changes.font) changes.font = {};
+      changes.font.weight = String(profile.fonts.bodyWeight);
+    }
+  }
+
   // Скругления для карточек, кнопок и акцентных элементов
-  if ((role === "card" || role === "button" || role === "accent_element") && profile.radius.common != null) {
+  const radiusValue = role === "button"
+    ? (profile.radius.buttons != null ? profile.radius.buttons : profile.radius.common)
+    : profile.radius.common;
+  if ((role === "card" || role === "button" || role === "accent_element") && radiusValue != null) {
     changes.border_radius = {
-      lt: profile.radius.common,
-      rt: profile.radius.common,
-      rb: profile.radius.common,
-      lb: profile.radius.common,
+      lt: radiusValue,
+      rt: radiusValue,
+      rb: radiusValue,
+      lb: radiusValue,
     };
   }
 
@@ -2404,20 +2442,79 @@ async function scanBlocksOnPage() {
   const foundBlockIds = Object.keys(blockMap);
   log(`✓ найдено блоков в превью: ${foundBlockIds.length}`);
 
+  const loadedById = new Map(loadedBlocks.map(b => [String(b.block_id), b]));
+  const loadedByLayout = new Map();
+  loadedBlocks.forEach(b => {
+    const lk = String(b.layout_id || b.block_layout_id || b.layout || "");
+    if (!lk) return;
+    if (!loadedByLayout.has(lk)) loadedByLayout.set(lk, []);
+    loadedByLayout.get(lk).push(b);
+  });
+
+  const scannedEntries = foundBlockIds.map(key => ({ key, data: blockMap[key] || {} }));
+  scannedEntries.sort((a, b) => (a.data.domIndex ?? 0) - (b.data.domIndex ?? 0));
+
+  const normalized = {};
+  const usedLoadedIds = new Set();
+  const consumedRawKeys = new Set();
+
+  const tryMatchLoadedBlock = (rawId, scannedData) => {
+    if (loadedById.has(String(rawId))) return loadedById.get(String(rawId));
+    const layoutId = String(scannedData?.layoutId || "");
+    if (layoutId && loadedByLayout.has(layoutId)) {
+      const candidates = loadedByLayout.get(layoutId).filter(b => !usedLoadedIds.has(String(b.block_id)));
+      if (candidates.length === 1) return candidates[0];
+    }
+    return null;
+  };
+
   // Сохраняем результат
   if (!scannedBlockClasses[variant_id]) scannedBlockClasses[variant_id] = {};
   let totalClasses = 0;
   let matched = 0;
-  for (const blockId of foundBlockIds) {
-    scannedBlockClasses[variant_id][blockId] = {
-      classNames: blockMap[blockId].classNames || [],
+  for (const { key: rawId, data } of scannedEntries) {
+    const matchedBlock = tryMatchLoadedBlock(rawId, data);
+    const targetBlockId = matchedBlock ? String(matchedBlock.block_id) : String(rawId);
+    normalized[targetBlockId] = {
+      classNames: data.classNames || [],
+      layoutId: data.layoutId || null,
+      source: data.source || "unknown",
       scannedAt: Date.now(),
     };
-    totalClasses += blockMap[blockId].classNames.length;
-    // Сопоставляем со списком загруженных блоков
-    if (loadedBlocks.find(b => String(b.block_id) === String(blockId))) {
+    totalClasses += (data.classNames || []).length;
+    if (matchedBlock) {
+      matched++;
+      usedLoadedIds.add(String(matchedBlock.block_id));
+      consumedRawKeys.add(String(rawId));
+    }
+  }
+
+  // Fallback: если id/layout не дали совпадений, маппим оставшиеся блоки по порядку.
+  if (matched < loadedBlocks.length) {
+    const unmatchedLoaded = loadedBlocks.filter(b => !usedLoadedIds.has(String(b.block_id)));
+    const unmatchedScanned = scannedEntries.filter(se => !consumedRawKeys.has(String(se.key)));
+    const n = Math.min(unmatchedLoaded.length, unmatchedScanned.length);
+    for (let i = 0; i < n; i++) {
+      const lb = unmatchedLoaded[i];
+      const se = unmatchedScanned[i];
+      normalized[String(lb.block_id)] = {
+        classNames: se.data.classNames || [],
+        layoutId: se.data.layoutId || null,
+        source: `${se.data.source || "unknown"}+order`,
+        scannedAt: Date.now(),
+      };
+      usedLoadedIds.add(String(lb.block_id));
       matched++;
     }
+  }
+
+  for (const [blockId, data] of Object.entries(normalized)) {
+    scannedBlockClasses[variant_id][blockId] = {
+      classNames: data.classNames || [],
+      layoutId: data.layoutId || null,
+      source: data.source || "unknown",
+      scannedAt: Date.now(),
+    };
   }
   await saveScannedClasses();
 

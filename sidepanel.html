@@ -797,6 +797,80 @@
         font-size: 11px;
         color: #94a3b8;
       }
+
+      /* v1.4: UX-polish (без изменения логики) */
+      body {
+        background:
+          radial-gradient(1200px 300px at 20% -120px, rgba(37, 99, 235, 0.08), transparent 60%),
+          radial-gradient(900px 240px at 90% -120px, rgba(16, 185, 129, 0.08), transparent 65%),
+          #f8fafc;
+      }
+      .app-header {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        padding-bottom: 8px;
+        backdrop-filter: blur(8px);
+        background: rgba(248, 250, 252, 0.9);
+        border-bottom: 1px solid rgba(226, 232, 240, 0.7);
+      }
+      .app-title { letter-spacing: -0.2px; }
+      .tabs {
+        top: 63px;
+        padding-top: 10px;
+        background: rgba(248, 250, 252, 0.9);
+        backdrop-filter: blur(8px);
+      }
+      .tab {
+        border-radius: 8px 8px 0 0;
+      }
+      .tab.active {
+        background: #eff6ff;
+      }
+      .card {
+        border-radius: 14px;
+        box-shadow: 0 6px 24px rgba(15, 23, 42, 0.04);
+      }
+      .mode-option {
+        border-radius: 10px;
+      }
+      .quick-jump {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .quick-jump button {
+        width: auto;
+        flex: 1;
+        padding: 8px 10px;
+        font-size: 11px;
+        border-radius: 999px;
+      }
+      .pill-note {
+        background: #eff6ff;
+        color: #1e40af;
+        border: 1px solid #bfdbfe;
+        font-size: 11px;
+        line-height: 1.4;
+        border-radius: 999px;
+        padding: 6px 10px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .actions-sticky {
+        position: sticky;
+        bottom: 8px;
+        z-index: 15;
+        background: linear-gradient(to top, rgba(248, 250, 252, 1) 45%, rgba(248, 250, 252, 0));
+        padding-top: 12px;
+      }
+      .actions-sticky .row {
+        margin-top: 6px !important;
+      }
+      .log {
+        border: 1px solid #1e293b;
+      }
     </style>
   </head>
   <body>
@@ -816,6 +890,14 @@
 
     <!-- ==================== TAB: WORK ==================== -->
     <div class="tab-panel active" id="tab-work">
+      <div class="quick-jump">
+        <button class="secondary small-btn tab-jump" data-tab-jump="settings">⚙️ API и модель</button>
+        <button class="secondary small-btn tab-jump" data-tab-jump="logs">📜 Смотреть лог</button>
+      </div>
+
+      <div style="margin-bottom: 12px;">
+        <span class="pill-note">💡 Сначала «Загрузить блоки», потом генерация/правки</span>
+      </div>
 
       <!-- Режим работы -->
       <div class="card">
@@ -860,17 +942,19 @@
         <div class="card-warn">⚠ С галочкой: результат попадает в черновик, можно проверить и отредактировать. Без галочки: сразу пишется в блоки.</div>
       </div>
 
-      <div class="row">
-        <button id="loadBtn">📥 Загрузить блоки</button>
-      </div>
-      <div class="row" style="margin-top:8px">
-        <button id="fillBtn" disabled>✨ Сгенерировать всю страницу</button>
-      </div>
-      <div class="row" style="margin-top:8px">
-        <button class="secondary" id="addBlockBtn" disabled>➕ Добавить блок</button>
-      </div>
-      <div class="row" style="margin-top:8px">
-        <button class="secondary" id="presetsBtn" disabled>📄 Создать страницу из пресета</button>
+      <div class="actions-sticky">
+        <div class="row">
+          <button id="loadBtn">📥 Загрузить блоки</button>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <button id="fillBtn" disabled>✨ Сгенерировать всю страницу</button>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <button class="secondary" id="addBlockBtn" disabled>➕ Добавить блок</button>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <button class="secondary" id="presetsBtn" disabled>📄 Создать страницу из пресета</button>
+        </div>
       </div>
 
       <div class="draft-bar" id="draftBar" style="margin-top:14px">

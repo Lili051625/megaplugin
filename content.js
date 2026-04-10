@@ -187,6 +187,7 @@
   //   { block_id: { classNames: ["...", "..."], classes: [{name, role}, ...] } }
   function scanBlocksFromEditorIframe() {
     const result = {};
+    const byId = new Map(); // чтобы не дублировать блоки найденные разными способами
 
     // Шаг 1: ищем все iframe на странице редактора, пробуем достучаться до их DOM
     const iframes = Array.from(document.querySelectorAll("iframe"));
@@ -221,12 +222,23 @@
     // Шаг 2: находим элементы блоков
     // Перебираем разные способы найти блок и его id
     const blockElements = [];
+    const pushBlockEl = (id, el, extras = {}) => {
+      if (!id || !el) return;
+      const key = String(id);
+      if (byId.has(key)) return;
+      const item = { id: key, el, ...extras };
+      byId.set(key, item);
+      blockElements.push(item);
+    };
 
     // Способ 1: data-block-id
     editorIframeDoc.querySelectorAll("[data-block-id]").forEach(el => {
       const id = el.getAttribute("data-block-id");
       if (id && /^\d+$/.test(id)) {
-        blockElements.push({ id, el });
+        pushBlockEl(id, el, {
+          layoutId: el.getAttribute("data-block-layout") || null,
+          source: "data-block-id",
+        });
       }
     });
 
@@ -234,7 +246,12 @@
     if (!blockElements.length) {
       editorIframeDoc.querySelectorAll("[id]").forEach(el => {
         const m = el.id.match(/^(?:block|lp-block|lpc-block)[-_](\d+)$/);
-        if (m) blockElements.push({ id: m[1], el });
+        if (m) {
+          pushBlockEl(m[1], el, {
+            layoutId: el.getAttribute("data-block-layout") || null,
+            source: "id-pattern",
+          });
+        }
       });
     }
 
@@ -244,15 +261,43 @@
         // Ищем block_id в любых атрибутах вида data-*-id
         for (const attr of el.attributes) {
           if (/block.{0,3}id/i.test(attr.name) && /^\d+$/.test(attr.value)) {
-            blockElements.push({ id: attr.value, el });
+            pushBlockEl(attr.value, el, {
+              layoutId: el.getAttribute("data-block-layout") || null,
+              source: "lp-block-attr",
+            });
             return;
           }
         }
       });
     }
 
+    // Способ 4: корневые lpc-блоки редактора:
+    // <div class="... lpc-block ..." id="_lp_block_645419916" data-block-layout="625116" ...>
+    // В таких шаблонах часто НЕТ data-block-id / block_*, поэтому используем id-паттерн _lp_block_<digits>.
+    if (!blockElements.length) {
+      editorIframeDoc.querySelectorAll(".lpc-block[id^='_lp_block_'], .lpc-block[data-block-layout]").forEach(el => {
+        const rawId = el.getAttribute("id") || "";
+        const m = rawId.match(/^_?lp[_-]block[_-](\d+)$/i);
+        const extractedId = m?.[1] || null;
+        const layoutId = el.getAttribute("data-block-layout") || null;
+
+        if (extractedId) {
+          pushBlockEl(extractedId, el, { layoutId, source: "lpc-block-id" });
+          return;
+        }
+
+        // fallback: если id не распарсился, но есть layout — временно индексный ключ.
+        // sidepanel попробует сматчить по layout_id или по порядку.
+        if (layoutId && /^\d+$/.test(layoutId)) {
+          const tempId = `layout_${layoutId}_${blockElements.length}`;
+          pushBlockEl(tempId, el, { layoutId, source: "lpc-block-layout" });
+        }
+      });
+    }
+
     // Шаг 3: для каждого блока собираем CSS-классы вложенных элементов
-    for (const { id, el } of blockElements) {
+    for (let i = 0; i < blockElements.length; i++) {
+      const { id, el, layoutId, source } = blockElements[i];
       const classSet = new Set();
       const classElements = {}; // className → пример элемента (для определения роли)
 
@@ -281,6 +326,9 @@
       result[id] = {
         classNames: Array.from(classSet),
         elementsCount: allInside.length,
+        layoutId: layoutId && /^\d+$/.test(layoutId) ? String(layoutId) : null,
+        domIndex: i,
+        source: source || "unknown",
       };
     }
 
