@@ -2839,6 +2839,17 @@ function buildCssPayloadForBlock(block, profile) {
     }
   }
 
+  if (!indentsTemplateKeys.length) {
+    // Fallback-шаблон: разные проекты используют разные ключи.
+    // Отправляем безопасный набор вероятных имён — сервер применит поддерживаемые.
+    indentsTemplateKeys = [
+      "pt", "pr", "pb", "pl",
+      "mt", "mr", "mb", "ml",
+      "padding_top", "padding_right", "padding_bottom", "padding_left",
+      "margin_top", "margin_right", "margin_bottom", "margin_left",
+    ];
+  }
+
   const targetThemeKeys = Object.keys(result).filter(k => /^theme_/.test(k));
   const applyThemes = targetThemeKeys.length ? targetThemeKeys : [themeKey];
 
@@ -3105,17 +3116,18 @@ async function applyStyleProfileToBlocks(blocks, profile, options = {}) {
 
     // Считаем сколько классов и каких изменений
     let classCount = 0;
-    const changeTypes = { background: 0, font: 0, border_radius: 0 };
+    const changeTypes = { background: 0, font: 0, border_radius: 0, indents: 0 };
     for (const themeData of Object.values(payload)) {
       for (const classData of Object.values(themeData)) {
         classCount++;
         if (classData.background) changeTypes.background++;
         if (classData.font) changeTypes.font++;
         if (classData.border_radius) changeTypes.border_radius++;
+        if (classData.indents) changeTypes.indents++;
       }
     }
 
-    log(`  → "${block.name}": ${classCount} классов (фон ${changeTypes.background}, шрифт ${changeTypes.font}, скругления ${changeTypes.border_radius})${getScannedClassesForBlock(block.block_id) ? " 🔍" : ""}`);
+    log(`  → "${block.name}": ${classCount} классов (фон ${changeTypes.background}, шрифт ${changeTypes.font}, скругления ${changeTypes.border_radius}, отступы ${changeTypes.indents})${getScannedClassesForBlock(block.block_id) ? " 🔍" : ""}`);
 
     try {
       const r = await send({ type: "saveBlockCss", variant_id, cssPayload: fullPayload });
