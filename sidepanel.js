@@ -101,6 +101,7 @@ async function loadSettings() {
     "styleSourceUrl",
     "geminiImageApiKey", "geminiImageModel",
     "xaiApiKey", "xaiImageModel", // миграция со старых ключей
+    "designerModeEnabled", "strictContrastEnabled",
   ]);
   $("apiKey").value = s.apiKey || "";
   $("model").value = s.model || "gemini-3.1-flash-lite-preview";
@@ -110,6 +111,8 @@ async function loadSettings() {
   if ($("styleSourceUrl")) $("styleSourceUrl").value = s.styleSourceUrl || "";
   if ($("geminiImageApiKey")) $("geminiImageApiKey").value = s.geminiImageApiKey || s.xaiApiKey || "";
   if ($("geminiImageModel")) $("geminiImageModel").value = s.geminiImageModel || "imagen-4.0-generate-001";
+  if ($("designerModeEnabled")) $("designerModeEnabled").checked = s.designerModeEnabled !== false;
+  if ($("strictContrastEnabled")) $("strictContrastEnabled").checked = s.strictContrastEnabled !== false;
   draft = s.draft || {};
   setMode(s.mode || "generate");
   await loadStyleProfiles();
@@ -127,6 +130,8 @@ async function saveSettings() {
     mode: currentMode,
     geminiImageApiKey: $("geminiImageApiKey")?.value.trim() || "",
     geminiImageModel: $("geminiImageModel")?.value.trim() || "imagen-4.0-generate-001",
+    designerModeEnabled: $("designerModeEnabled")?.checked !== false,
+    strictContrastEnabled: $("strictContrastEnabled")?.checked !== false,
   });
 }
 async function saveDraft() {
@@ -135,6 +140,8 @@ async function saveDraft() {
 ["apiKey", "model", "variantId", "brief", "geminiImageApiKey", "geminiImageModel"]
   .forEach((id) => $(id)?.addEventListener("input", saveSettings));
 $("dryRun").addEventListener("change", saveSettings);
+$("designerModeEnabled")?.addEventListener("change", saveSettings);
+$("strictContrastEnabled")?.addEventListener("change", saveSettings);
 
 // ================================================================
 //                  ОБЩЕНИЕ С CONTENT SCRIPT
@@ -2251,6 +2258,122 @@ function hexToRgbString(hex, alpha = 1) {
   return `rgb(${r},${g},${b})`;
 }
 
+function hexToRgb(hex) {
+  const m = String(hex || "").match(/^#?([0-9a-f]{6})$/i) || String(hex || "").match(/^#?([0-9a-f]{3})$/i);
+  if (!m) return null;
+  let h = m[1];
+  if (h.length === 3) h = h.split("").map(c => c + c).join("");
+  return {
+    r: parseInt(h.slice(0, 2), 16),
+    g: parseInt(h.slice(2, 4), 16),
+    b: parseInt(h.slice(4, 6), 16),
+  };
+}
+
+function rgbToHex(r, g, b) {
+  const toHex = (v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function rgbToHsl({ r, g, b }) {
+  let rn = r / 255, gn = g / 255, bn = b / 255;
+  const max = Math.max(rn, gn, bn), min = Math.min(rn, gn, bn);
+  let h, s, l = (max + min) / 2;
+  if (max === min) {
+    h = s = 0;
+  } else {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case rn: h = (gn - bn) / d + (gn < bn ? 6 : 0); break;
+      case gn: h = (bn - rn) / d + 2; break;
+      default: h = (rn - gn) / d + 4;
+    }
+    h /= 6;
+  }
+  return { h: h * 360, s: s * 100, l: l * 100 };
+}
+
+function hslToRgb({ h, s, l }) {
+  let hn = ((h % 360) + 360) % 360 / 360;
+  let sn = Math.max(0, Math.min(100, s)) / 100;
+  let ln = Math.max(0, Math.min(100, l)) / 100;
+  if (sn === 0) {
+    const v = ln * 255;
+    return { r: v, g: v, b: v };
+  }
+  const hue2rgb = (p, q, t) => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  const q = ln < 0.5 ? ln * (1 + sn) : ln + sn - ln * sn;
+  const p = 2 * ln - q;
+  return {
+    r: hue2rgb(p, q, hn + 1 / 3) * 255,
+    g: hue2rgb(p, q, hn) * 255,
+    b: hue2rgb(p, q, hn - 1 / 3) * 255,
+  };
+}
+
+function relLuminance(hex) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return 0;
+  const f = (v) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * f(rgb.r) + 0.7152 * f(rgb.g) + 0.0722 * f(rgb.b);
+}
+
+function contrastRatio(hex1, hex2) {
+  const l1 = relLuminance(hex1);
+  const l2 = relLuminance(hex2);
+  const lighter = Math.max(l1, l2);
+  const darker = Math.min(l1, l2);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+function pickReadableTextColor(bgHex, candidates, minRatio = 4.5) {
+  const valid = (candidates || []).filter(Boolean);
+  if (!bgHex || !valid.length) return null;
+  let best = valid[0];
+  let bestRatio = contrastRatio(bgHex, best);
+  for (const c of valid.slice(1)) {
+    const r = contrastRatio(bgHex, c);
+    if (r > bestRatio) {
+      bestRatio = r;
+      best = c;
+    }
+  }
+  return bestRatio >= minRatio ? best : best;
+}
+
+function getDesignerModeFlags() {
+  return {
+    designer: $("designerModeEnabled")?.checked !== false,
+    strictContrast: $("strictContrastEnabled")?.checked !== false,
+  };
+}
+
+function tuneAccentColor(hex) {
+  if (!hex) return hex;
+  const { designer } = getDesignerModeFlags();
+  if (!designer) return hex;
+  const rgb = hexToRgb(hex);
+  if (!rgb) return hex;
+  const hsl = rgbToHsl(rgb);
+  // Мягкий ограничитель "неоновых" оттенков, не убивающий яркий бренд.
+  if (hsl.s > 95 && hsl.l > 68) hsl.l = 64;
+  if (hsl.s > 98 && hsl.l < 28) hsl.l = 32;
+  if (hsl.s > 97) hsl.s = 94;
+  const tuned = hslToRgb(hsl);
+  return rgbToHex(tuned.r, tuned.g, tuned.b);
+}
+
 // Извлечь альфу из существующего цвета (rgba) — нужно чтобы сохранить
 // прозрачность когда подменяем цвет.
 function extractAlpha(colorStr) {
@@ -2382,6 +2505,8 @@ function buildChangesForRole(role, profile, className = "") {
   const cls = String(className || "").toLowerCase();
   const isTextLike = /__title$|__heading$|__name$|__question$|__subtitle$|__sub-?title$|__caption$|__author$|__text$|__desc(?:ription)?$|__answer$/.test(cls);
   const rootBgAllow = /^\.lpc-block$|^\.lp-block(?:-bg|-overlay|_item|-bg_item)?$/.test(cls);
+  const { strictContrast } = getDesignerModeFlags();
+  const accentBgHex = tuneAccentColor(profile.colors.accent);
 
   // Цвет фона
   if (role === "block_root" && profile.colors.pageBackground && rootBgAllow) {
@@ -2398,14 +2523,14 @@ function buildChangesForRole(role, profile, className = "") {
     };
   } else if (role === "button" && profile.colors.accent) {
     changes.background = {
-      color: hexToRgbString(profile.colors.accent),
+      color: hexToRgbString(accentBgHex),
       image: "none",
       bg_type: "solid",
     };
   } else if (role === "accent_element" && profile.colors.accent) {
     // Иконки, цифры, кружочки — акцентный цвет фона (для кружочков)
     changes.background = {
-      color: hexToRgbString(profile.colors.accent),
+      color: hexToRgbString(accentBgHex),
       image: "none",
       bg_type: "solid",
     };
@@ -2426,6 +2551,24 @@ function buildChangesForRole(role, profile, className = "") {
   if (fontColor) {
     if (!changes.font) changes.font = {};
     changes.font.color = hexToRgbString(fontColor);
+  }
+
+  // Контраст-контроль: если у роли есть явный фон, подбираем читаемый цвет текста.
+  if (strictContrast && (role === "button" || role === "accent_element" || role === "card")) {
+    const bgHex = role === "card"
+      ? (profile.colors.secondaryBackground || profile.colors.pageBackground)
+      : accentBgHex;
+    const textHex = pickReadableTextColor(bgHex, [
+      profile.colors.accentText,
+      profile.colors.headingText,
+      profile.colors.bodyText,
+      "#ffffff",
+      "#111111",
+    ], 4.5);
+    if (textHex) {
+      if (!changes.font) changes.font = {};
+      changes.font.color = hexToRgbString(textHex);
+    }
   }
 
   // Семейство шрифта
@@ -2479,6 +2622,8 @@ function buildFallbackChangesFromExistingClass(className, classData, profile) {
   const headingLike = /__title$|__heading$|__name$|__question$/.test(c);
   const cardLike = /__card$|__item(?:-content)?$|__item-content-card$|__box$|__cell$|__items$|__content$/.test(c);
   const rootLike = /^\.lpc-block$|^\.lp-block(?:-bg|-overlay|_item|-bg_item)?$/.test(c);
+  const { strictContrast } = getDesignerModeFlags();
+  const accentBgHex = tuneAccentColor(profile?.colors?.accent);
 
   // Если у класса есть font — почти всегда можно безопасно обновить цвет+семейство.
   if (classData.font && typeof classData.font === "object") {
@@ -2501,7 +2646,9 @@ function buildFallbackChangesFromExistingClass(className, classData, profile) {
 
   // Фон трогаем только если класс не текстовый.
   if (!textLike && classData.background && typeof classData.background === "object") {
-    const bg = (cardLike || (!rootLike && !textLike))
+    const bg = /__button$|__btn$|__link$/.test(c)
+      ? accentBgHex
+      : (cardLike || (!rootLike && !textLike))
       ? (profile?.colors?.secondaryBackground || profile?.colors?.pageBackground)
       : profile?.colors?.pageBackground;
     if (bg) {
@@ -2512,6 +2659,20 @@ function buildFallbackChangesFromExistingClass(className, classData, profile) {
         bg_type: "solid",
       };
     }
+  }
+
+  if (strictContrast && out.background && out.font && out.background.color) {
+    const bgHex = /rgb\(/i.test(out.background.color)
+      ? (profile?.colors?.secondaryBackground || profile?.colors?.pageBackground || accentBgHex)
+      : null;
+    const readable = pickReadableTextColor(bgHex, [
+      profile?.colors?.accentText,
+      profile?.colors?.headingText,
+      profile?.colors?.bodyText,
+      "#ffffff",
+      "#111111",
+    ], 4.5);
+    if (readable) out.font.color = hexToRgbString(readable);
   }
 
   // Скругления можно мягко унифицировать, если они уже есть у класса.
