@@ -102,6 +102,7 @@ async function loadSettings() {
     "geminiImageApiKey", "geminiImageModel",
     "xaiApiKey", "xaiImageModel", // миграция со старых ключей
     "designerModeEnabled", "strictContrastEnabled",
+    "spacingHarmonyEnabled",
   ]);
   $("apiKey").value = s.apiKey || "";
   $("model").value = s.model || "gemini-3.1-flash-lite-preview";
@@ -113,6 +114,7 @@ async function loadSettings() {
   if ($("geminiImageModel")) $("geminiImageModel").value = s.geminiImageModel || "imagen-4.0-generate-001";
   if ($("designerModeEnabled")) $("designerModeEnabled").checked = s.designerModeEnabled !== false;
   if ($("strictContrastEnabled")) $("strictContrastEnabled").checked = s.strictContrastEnabled !== false;
+  if ($("spacingHarmonyEnabled")) $("spacingHarmonyEnabled").checked = s.spacingHarmonyEnabled !== false;
   draft = s.draft || {};
   setMode(s.mode || "generate");
   await loadStyleProfiles();
@@ -132,6 +134,7 @@ async function saveSettings() {
     geminiImageModel: $("geminiImageModel")?.value.trim() || "imagen-4.0-generate-001",
     designerModeEnabled: $("designerModeEnabled")?.checked !== false,
     strictContrastEnabled: $("strictContrastEnabled")?.checked !== false,
+    spacingHarmonyEnabled: $("spacingHarmonyEnabled")?.checked !== false,
   });
 }
 async function saveDraft() {
@@ -142,6 +145,7 @@ async function saveDraft() {
 $("dryRun").addEventListener("change", saveSettings);
 $("designerModeEnabled")?.addEventListener("change", saveSettings);
 $("strictContrastEnabled")?.addEventListener("change", saveSettings);
+$("spacingHarmonyEnabled")?.addEventListener("change", saveSettings);
 
 // ================================================================
 //                  ОБЩЕНИЕ С CONTENT SCRIPT
@@ -2356,6 +2360,7 @@ function getDesignerModeFlags() {
   return {
     designer: $("designerModeEnabled")?.checked !== false,
     strictContrast: $("strictContrastEnabled")?.checked !== false,
+    spacingHarmony: $("spacingHarmonyEnabled")?.checked !== false,
   };
 }
 
@@ -2408,6 +2413,54 @@ function resolveIntentColors(profile, intent) {
   if (intent === "cta") return { bg: accent, text: accentText };
   if (intent === "accent_soft") return { bg: secondary, text: heading };
   return { bg: secondary, text: body };
+}
+
+function normalizeSpacingValue(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function buildIndentsPatch(existingIndents, role, profile, className = "") {
+  const { spacingHarmony } = getDesignerModeFlags();
+  if (!spacingHarmony) return null;
+  if (!existingIndents || typeof existingIndents !== "object") return null;
+
+  const c = String(className || "").toLowerCase();
+  const sectionPad = Math.max(20, Math.min(120, profile?.spacing?.sectionPadding || 48));
+  const cardInner = Math.max(12, Math.round(sectionPad * 0.35));
+  const textOuter = Math.max(8, Math.round(sectionPad * 0.2));
+  const blockOuter = Math.max(20, Math.round(sectionPad * 0.65));
+  const ctaInner = Math.max(10, Math.round(sectionPad * 0.28));
+
+  let targetInternal = cardInner;
+  let targetExternal = textOuter;
+  if (role === "block_root") targetExternal = blockOuter;
+  if (role === "card") { targetInternal = cardInner; targetExternal = Math.max(10, Math.round(sectionPad * 0.25)); }
+  if (role === "button" || /__btn$|__button$|__cta$/.test(c)) { targetInternal = ctaInner; targetExternal = Math.max(6, Math.round(sectionPad * 0.15)); }
+  if (role === "heading") targetExternal = Math.max(10, Math.round(sectionPad * 0.22));
+
+  const patch = {};
+  for (const [k, val] of Object.entries(existingIndents)) {
+    const curr = normalizeSpacingValue(val);
+    if (curr == null) continue;
+    const key = k.toLowerCase();
+    const isPadding = /pad|(^|_)p([trblxy]|$)|padding|inset/.test(key);
+    const isMargin = /mar|(^|_)m([trblxy]|$)|margin|outset/.test(key);
+    if (!isPadding && !isMargin) continue;
+
+    const isVertical = /top|bottom|_t|_b|\by\b/.test(key);
+    const minTarget = isPadding
+      ? (isVertical ? targetInternal : Math.max(8, Math.round(targetInternal * 0.8)))
+      : (isVertical ? targetExternal : Math.max(6, Math.round(targetExternal * 0.75)));
+
+    // Не ломаем ритм: только поднимаем слишком маленькие значения и слегка ограничиваем экстремумы.
+    let next = curr;
+    if (curr < minTarget) next = minTarget;
+    if (curr > sectionPad * 2.4) next = Math.round(sectionPad * 2.4);
+    if (next !== curr) patch[k] = next;
+  }
+
+  return Object.keys(patch).length ? patch : null;
 }
 
 // Извлечь альфу из существующего цвета (rgba) — нужно чтобы сохранить
@@ -2536,7 +2589,7 @@ const COMMON_BLOCK_CLASSES = [
 ];
 
 // Создаёт изменения для одного класса исходя из его роли
-function buildChangesForRole(role, profile, className = "") {
+function buildChangesForRole(role, profile, className = "", existingClassData = null) {
   const changes = {};
   const cls = String(className || "").toLowerCase();
   const isTextLike = /__title$|__heading$|__name$|__question$|__subtitle$|__sub-?title$|__caption$|__author$|__text$|__desc(?:ription)?$|__answer$/.test(cls);
@@ -2645,6 +2698,11 @@ function buildChangesForRole(role, profile, className = "") {
     };
   }
 
+  const indentsPatch = buildIndentsPatch(existingClassData?.indents, role, profile, className);
+  if (indentsPatch) {
+    changes.indents = { ...(existingClassData?.indents || {}), ...indentsPatch };
+  }
+
   return Object.keys(changes).length > 0 ? changes : null;
 }
 
@@ -2726,6 +2784,11 @@ function buildFallbackChangesFromExistingClass(className, classData, profile) {
     }
   }
 
+  const indentsPatch = buildIndentsPatch(classData.indents, guessedRole, profile, className);
+  if (indentsPatch) {
+    out.indents = { ...(classData.indents || {}), ...indentsPatch };
+  }
+
   return Object.keys(out).length ? out : null;
 }
 
@@ -2750,7 +2813,7 @@ function buildCssPayloadForBlock(block, profile) {
         const role = classifyCssClass(className);
         const changes = role === "other"
           ? buildFallbackChangesFromExistingClass(className, classData, profile)
-          : buildChangesForRole(role, profile, className);
+          : buildChangesForRole(role, profile, className, classData);
         if (changes) {
           if (!result[tKey]) result[tKey] = {};
           result[tKey][className] = { ...(result[tKey][className] || {}), ...changes };
@@ -2766,7 +2829,7 @@ function buildCssPayloadForBlock(block, profile) {
     for (const className of scanned.classNames) {
       const role = classifyCssClass(className);
       if (role === "other") continue;
-      const changes = buildChangesForRole(role, profile, className);
+      const changes = buildChangesForRole(role, profile, className, null);
       if (!changes) continue;
       // Сканированные классы имеют приоритет: дообогащают/уточняют то, что было в шаге 1.
       result[themeKey][className] = { ...(result[themeKey][className] || {}), ...changes };
@@ -2775,7 +2838,7 @@ function buildCssPayloadForBlock(block, profile) {
     // Шаг 3: запасной — банк типичных классов
     // Используется только если у блока нет сканированных классов
     for (const entry of COMMON_BLOCK_CLASSES) {
-      const changes = buildChangesForRole(entry.role, profile, entry.className);
+      const changes = buildChangesForRole(entry.role, profile, entry.className, null);
       if (!changes) continue;
       const filtered = {};
       if (entry.apply.includes("background") && changes.background) filtered.background = changes.background;
@@ -2808,6 +2871,7 @@ function countChangesInPayload(blockPayload) {
       if (classData.background) count++;
       if (classData.font) count++;
       if (classData.border_radius) count++;
+      if (classData.indents) count++;
     }
   }
   return count;
