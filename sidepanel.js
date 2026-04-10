@@ -2467,6 +2467,66 @@ function buildChangesForRole(role, profile, className = "") {
   return Object.keys(changes).length > 0 ? changes : null;
 }
 
+// Доп. эвристика для классов, которые не удалось типизировать по имени.
+// Идея: если у класса уже есть font/background в css_settings — мягко подменяем цвета/шрифт
+// по дизайн-профилю, чтобы убрать старую "чужую" палитру.
+function buildFallbackChangesFromExistingClass(className, classData, profile) {
+  if (!classData || typeof classData !== "object") return null;
+  const c = String(className || "").toLowerCase();
+  const out = {};
+
+  const textLike = /__title$|__heading$|__name$|__question$|__subtitle$|__sub-?title$|__caption$|__author$|__text$|__desc(?:ription)?$|__answer$/.test(c);
+  const headingLike = /__title$|__heading$|__name$|__question$/.test(c);
+  const cardLike = /__card$|__item(?:-content)?$|__item-content-card$|__box$|__cell$|__items$|__content$/.test(c);
+  const rootLike = /^\.lpc-block$|^\.lp-block(?:-bg|-overlay|_item|-bg_item)?$/.test(c);
+
+  // Если у класса есть font — почти всегда можно безопасно обновить цвет+семейство.
+  if (classData.font && typeof classData.font === "object") {
+    const color = headingLike ? profile?.colors?.headingText : profile?.colors?.bodyText;
+    if (color) {
+      if (!out.font) out.font = {};
+      out.font.color = hexToRgbString(color);
+    }
+    const family = headingLike ? profile?.fonts?.heading : profile?.fonts?.body;
+    if (family) {
+      if (!out.font) out.font = {};
+      out.font.family = fontFamilyWithFallback(family);
+    }
+    const weight = headingLike ? profile?.fonts?.headingWeight : profile?.fonts?.bodyWeight;
+    if (weight) {
+      if (!out.font) out.font = {};
+      out.font.weight = String(weight);
+    }
+  }
+
+  // Фон трогаем только если класс не текстовый.
+  if (!textLike && classData.background && typeof classData.background === "object") {
+    const bg = (cardLike || (!rootLike && !textLike))
+      ? (profile?.colors?.secondaryBackground || profile?.colors?.pageBackground)
+      : profile?.colors?.pageBackground;
+    if (bg) {
+      out.background = {
+        ...(classData.background || {}),
+        color: hexToRgbString(bg),
+        image: "none",
+        bg_type: "solid",
+      };
+    }
+  }
+
+  // Скругления можно мягко унифицировать, если они уже есть у класса.
+  if ((classData.border_radius && typeof classData.border_radius === "object") && !textLike) {
+    const r = /__button$|__btn$|__link$/.test(c)
+      ? (profile?.radius?.buttons ?? profile?.radius?.common)
+      : profile?.radius?.common;
+    if (r != null) {
+      out.border_radius = { lt: r, rt: r, rb: r, lb: r };
+    }
+  }
+
+  return Object.keys(out).length ? out : null;
+}
+
 // Главная функция: строит CSS-payload для одного блока на основе профиля.
 // v1.3: использует ТРИ источника классов в порядке приоритета:
 //   1) Уже существующие классы в css_settings блока (как раньше)
@@ -2486,8 +2546,9 @@ function buildCssPayloadForBlock(block, profile) {
       for (const [className, classData] of Object.entries(themeData)) {
         if (!classData || typeof classData !== "object") continue;
         const role = classifyCssClass(className);
-        if (role === "other") continue;
-        const changes = buildChangesForRole(role, profile, className);
+        const changes = role === "other"
+          ? buildFallbackChangesFromExistingClass(className, classData, profile)
+          : buildChangesForRole(role, profile, className);
         if (changes) {
           if (!result[tKey]) result[tKey] = {};
           result[tKey][className] = { ...(result[tKey][className] || {}), ...changes };
