@@ -2866,6 +2866,9 @@ function buildCssPayloadForBlock(block, profile) {
   const themeKey = `theme_${block.layout_id}`;
   const result = { [themeKey]: {} };
   let indentsTemplateKeys = [];
+  const scanned = getScannedClassesForBlock(block.block_id);
+  const scannedSet = new Set((scanned?.classNames || []).map(String));
+  const hasScanned = scannedSet.size > 0;
 
   // Шаг 1: применяем к классам которые УЖЕ есть в css_settings (если есть)
   const cssSettings = getBlockCssSettings(block);
@@ -2874,6 +2877,12 @@ function buildCssPayloadForBlock(block, profile) {
       if (!themeData || typeof themeData !== "object") continue;
       for (const [className, classData] of Object.entries(themeData)) {
         if (!classData || typeof classData !== "object") continue;
+        // Если есть реальные scanned-классы, не применяем "мусорные" классы
+        // из прошлых fallback-итераций, которых нет в реальном DOM.
+        if (hasScanned) {
+          const allowGlobal = /^\.lp-block(?:-bg|-overlay|_item|-bg_item)?$/.test(className);
+          if (!allowGlobal && !scannedSet.has(String(className))) continue;
+        }
         if (!indentsTemplateKeys.length && classData.indents && typeof classData.indents === "object") {
           indentsTemplateKeys = Object.keys(classData.indents);
         }
@@ -2905,7 +2914,6 @@ function buildCssPayloadForBlock(block, profile) {
 
   // Шаг 2: используем сканированные классы (если есть для этого блока)
   // Это самый точный источник — реальные классы которые рендерятся в превью
-  const scanned = getScannedClassesForBlock(block.block_id);
   if (scanned && scanned.classNames && scanned.classNames.length > 0) {
     for (const className of scanned.classNames) {
       const role = classifyCssClass(className);
@@ -3147,6 +3155,21 @@ async function applyStyleProfileToBlocks(blocks, profile, options = {}) {
     return { ok: 0, fail: 0, skipped: 0 };
   }
   const verbose = options.verbose !== false;
+
+  // Если нет реальных scanned-классов — автопопытка сканирования,
+  // иначе будем применять по "догадкам", что часто даёт слабый визуальный эффект.
+  const scannedReady = blocks.filter(b => {
+    const s = getScannedClassesForBlock(b.block_id);
+    return s?.classNames?.length > 0;
+  }).length;
+  if (scannedReady < Math.ceil(blocks.length * 0.4)) {
+    log(`⚠ scanned-классов мало (${scannedReady}/${blocks.length}), пробую автосканирование перед применением...`);
+    try {
+      await scanBlocksOnPage();
+    } catch (e) {
+      log(`⚠ автоскан не удался: ${e.message}`);
+    }
+  }
 
   // Создаём резервную копию ДО применения
   createBackup(variant_id, blocks);
