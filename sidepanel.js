@@ -13,14 +13,28 @@ const log = (msg) => {
 document.querySelectorAll('.tab').forEach(tab => {
   tab.addEventListener('click', () => {
     const target = tab.dataset.tab;
-    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === tab));
-    document.querySelectorAll('.tab-panel').forEach(p => {
-      p.classList.toggle('active', p.id === `tab-${target}`);
-    });
-    // v1.0: обновляем превью стилевого профиля при заходе в настройки
-    if (target === "settings") {
-      renderStyleProfilePreview();
-    }
+    openTab(target);
+  });
+});
+
+function openTab(target) {
+  document.querySelectorAll('.tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === target);
+  });
+  document.querySelectorAll('.tab-panel').forEach(p => {
+    p.classList.toggle('active', p.id === `tab-${target}`);
+  });
+  // v1.0: обновляем превью стилевого профиля при заходе в настройки
+  if (target === "settings") {
+    renderStyleProfilePreview();
+  }
+}
+
+document.querySelectorAll('.tab-jump').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const target = btn.dataset.tabJump;
+    if (!target) return;
+    openTab(target);
   });
 });
 
@@ -85,6 +99,8 @@ async function loadSettings() {
   const s = await chrome.storage.local.get([
     "apiKey", "model", "variantId", "brief", "dryRun", "draft", "mode",
     "styleSourceUrl",
+    "geminiImageApiKey", "geminiImageModel",
+    "xaiApiKey", "xaiImageModel", // миграция со старых ключей
   ]);
   $("apiKey").value = s.apiKey || "";
   $("model").value = s.model || "gemini-3.1-flash-lite-preview";
@@ -92,6 +108,8 @@ async function loadSettings() {
   $("brief").value = s.brief || "";
   $("dryRun").checked = s.dryRun !== false;
   if ($("styleSourceUrl")) $("styleSourceUrl").value = s.styleSourceUrl || "";
+  if ($("geminiImageApiKey")) $("geminiImageApiKey").value = s.geminiImageApiKey || s.xaiApiKey || "";
+  if ($("geminiImageModel")) $("geminiImageModel").value = s.geminiImageModel || "imagen-4.0-generate-001";
   draft = s.draft || {};
   setMode(s.mode || "generate");
   await loadStyleProfiles();
@@ -107,12 +125,15 @@ async function saveSettings() {
     brief: $("brief").value,
     dryRun: $("dryRun").checked,
     mode: currentMode,
+    geminiImageApiKey: $("geminiImageApiKey")?.value.trim() || "",
+    geminiImageModel: $("geminiImageModel")?.value.trim() || "imagen-4.0-generate-001",
   });
 }
 async function saveDraft() {
   await chrome.storage.local.set({ draft });
 }
-["apiKey", "model", "variantId", "brief"].forEach((id) => $(id).addEventListener("input", saveSettings));
+["apiKey", "model", "variantId", "brief", "geminiImageApiKey", "geminiImageModel"]
+  .forEach((id) => $(id)?.addEventListener("input", saveSettings));
 $("dryRun").addEventListener("change", saveSettings);
 
 // ================================================================
@@ -1900,6 +1921,8 @@ function renderStyleProfilePreview() {
     log(`🗑 удалён стилевой профиль для ${domain}`);
   });
 
+  $("genAltImagesBtn")?.addEventListener("click", generateImagesFromAltFields);
+
   // v1.3: сканирование классов блоков из iframe редактора
   $("styleScanBtn")?.addEventListener("click", scanBlocksOnPage);
 
@@ -2006,6 +2029,163 @@ $("styleSnapBtn")?.addEventListener("click", async () => {
   }
 });
 
+function sanitizeFileName(name) {
+  const cleaned = String(name || "")
+    .replace(/[\\/:*?"<>|]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 100);
+  return cleaned || `image-${Date.now()}`;
+}
+
+function extractAltPromptsFromValue(value, path = "", out = []) {
+  if (value == null) return out;
+  if (Array.isArray(value)) {
+    value.forEach((item, i) => extractAltPromptsFromValue(item, `${path}[${i}]`, out));
+    return out;
+  }
+  if (typeof value === "object") {
+    for (const [k, v] of Object.entries(value)) {
+      const p = path ? `${path}.${k}` : k;
+      if (/alt/i.test(k) && typeof v === "string" && v.trim()) {
+        out.push({ alt: v.trim(), path: p });
+      }
+      extractAltPromptsFromValue(v, p, out);
+    }
+  }
+  return out;
+}
+
+function buildBrandPaletteHint(profile) {
+  if (!profile?.colors) return "";
+  const colors = [
+    profile.colors.pageBackground,
+    profile.colors.secondaryBackground,
+    profile.colors.headingText,
+    profile.colors.bodyText,
+    profile.colors.accent,
+  ].filter(Boolean);
+  if (!colors.length) return "";
+  return `Brand color palette (must follow): ${colors.join(", ")}.`;
+}
+
+function buildImagenPrompt(altText, profile) {
+  return [
+    // Imagen по документации лучше работает с English prompts.
+    `Scene: ${altText}.`,
+    "Photorealistic commercial photo, natural lighting, high detail, premium quality.",
+    "No text, no letters, no typography, no logos, no watermark, no UI labels.",
+    buildBrandPaletteHint(profile),
+    "Clean composition, modern tasteful design, human-friendly visual hierarchy.",
+  ].filter(Boolean).join(" ");
+}
+
+async function callImagenApi({ apiKey, model, prompt }) {
+  const targetModel = model || "imagen-4.0-generate-001";
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(targetModel)}:predict`;
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey,
+    },
+    body: JSON.stringify({
+      instances: [{ prompt }],
+      parameters: {
+        sampleCount: 1,
+        aspectRatio: "16:9",
+        personGeneration: "allow_adult",
+      },
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(`Imagen ${res.status}: ${JSON.stringify(data).slice(0, 240)}`);
+  }
+  // Формат REST ответа Imagen:
+  // predictions[0].bytesBase64Encoded
+  const p0 = data?.predictions?.[0] || {};
+  if (p0.bytesBase64Encoded) return { type: "b64", value: p0.bytesBase64Encoded };
+  // Защитный fallback под возможные вариации
+  if (p0.b64_json) return { type: "b64", value: p0.b64_json };
+  if (p0.url) return { type: "url", value: p0.url };
+  throw new Error("Imagen вернул ответ без predictions[0].bytesBase64Encoded");
+}
+
+function triggerBlobDownload(blob, fileName) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function downloadGeneratedImage(imageResp, altText) {
+  const baseName = sanitizeFileName(altText);
+  if (imageResp.type === "url") {
+    const r = await fetch(imageResp.value);
+    if (!r.ok) throw new Error(`Не удалось скачать image url: ${r.status}`);
+    const blob = await r.blob();
+    const ext = blob.type?.includes("png") ? "png" : "jpg";
+    triggerBlobDownload(blob, `${baseName}.${ext}`);
+    return;
+  }
+  if (imageResp.type === "b64") {
+    const bin = atob(imageResp.value);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const blob = new Blob([bytes], { type: "image/jpeg" });
+    triggerBlobDownload(blob, `${baseName}.jpg`);
+    return;
+  }
+  throw new Error("Неизвестный формат изображения");
+}
+
+async function generateImagesFromAltFields() {
+  const apiKey = $("geminiImageApiKey")?.value.trim() || $("apiKey")?.value.trim();
+  const model = $("geminiImageModel")?.value.trim() || "imagen-4.0-generate-001";
+  if (!apiKey) return log("⚠ Укажи Gemini API key (общий или для Imagen) в настройках.");
+  if (!loadedBlocks.length) return log("⚠ Сначала загрузи блоки страницы.");
+
+  const profile = getCurrentStyleProfile();
+  const altItemsRaw = [];
+  loadedBlocks.forEach(b => {
+    const blockAlts = extractAltPromptsFromValue(b.data_json || {}, `block:${b.block_id}`);
+    blockAlts.forEach(x => altItemsRaw.push(x));
+  });
+  const dedup = new Map();
+  altItemsRaw.forEach(x => {
+    const key = x.alt.toLowerCase();
+    if (!dedup.has(key)) dedup.set(key, x.alt);
+  });
+  const altItems = Array.from(dedup.values());
+  if (!altItems.length) return log("⚠ В загруженных блоках не найдено ALT-полей для генерации.");
+
+  log(`\n=== ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЙ ПО ALT (Gemini Imagen) ===`);
+  log(`→ найдено ALT: ${altItems.length}`);
+  log(`→ требования: реалистично, без текста, 16:9, палитра главной страницы`);
+
+  let ok = 0;
+  for (let i = 0; i < altItems.length; i++) {
+    const alt = altItems[i];
+    try {
+      const prompt = buildImagenPrompt(alt, profile);
+      log(`  [${i + 1}/${altItems.length}] генерирую: "${alt.slice(0, 80)}${alt.length > 80 ? "..." : ""}"`);
+      const imageResp = await callImagenApi({ apiKey, model, prompt });
+      await downloadGeneratedImage(imageResp, alt);
+      ok++;
+      log(`  ✓ скачано: ${sanitizeFileName(alt)}`);
+      await new Promise(r => setTimeout(r, 300));
+    } catch (e) {
+      log(`  ✗ ошибка: ${e.message}`);
+    }
+  }
+  log(`✓ готово: ${ok}/${altItems.length} файлов.`);
+}
+
 // ================================================================
 //      v1.1: ПРИМЕНЕНИЕ СТИЛЕЙ К БЛОКАМ (РЕАЛЬНОЕ API)
 // ================================================================
@@ -2036,21 +2216,20 @@ $("styleSnapBtn")?.addEventListener("click", async () => {
 function classifyCssClass(className) {
   const c = (className || "").toLowerCase();
   // Корневой контейнер блока — пустая строка или ".lp-block-..."
-  if (c === "" || /^\.lp-block(?:-bg|-overlay|_item|-bg_item)?$/.test(c)) return "block_root";
+  if (c === "" || /^\.lp-block(?:-bg|-overlay|_item|-bg_item)?$/.test(c) || c === ".lpc-block") return "block_root";
+  if (/^\.lpc-.+(?:__wrap|__wrap-box|__container|__holder)$/.test(c)) return "block_root";
   // Заголовки
-  if (/__title$|__heading$|__name$/.test(c)) return "heading";
+  if (/__title$|__heading$|__name$|__question$/.test(c)) return "heading";
   // Подзаголовки и второстепенные тексты
   if (/__subtitle$|__sub-?title$|__caption$|__author$/.test(c)) return "subheading";
-  // Описания, тексты, ответы
-  if (/__text$|__desc(?:ription)?$|__answer$|__content$/.test(c)) return "body_text";
   // Карточки, элементы, контейнеры контента
-  if (/__card$|__item(?:-content)?$|__box$|__cell$/.test(c)) return "card";
+  if (/__card$|__item(?:-content)?$|__item-content-card$|__box$|__cell$|__items$|__content$/.test(c)) return "card";
+  // Описания, тексты, ответы
+  if (/__text$|__desc(?:ription)?$|__answer$/.test(c)) return "body_text";
   // Кнопки
   if (/__button$|__btn$|__link$/.test(c)) return "button";
   // Иконки и цифры (часто это акцентные элементы — кружочки, кружки с цифрами и т.д.)
   if (/__icon$|__number$|__num$|__counter$|__index$|__step-num$/.test(c)) return "accent_element";
-  // Вопросы (специфика FAQ)
-  if (/__question$/.test(c)) return "heading";
   return "other";
 }
 
@@ -2195,17 +2374,20 @@ const COMMON_BLOCK_CLASSES = [
 ];
 
 // Создаёт изменения для одного класса исходя из его роли
-function buildChangesForRole(role, profile) {
+function buildChangesForRole(role, profile, className = "") {
   const changes = {};
+  const cls = String(className || "").toLowerCase();
+  const isTextLike = /__title$|__heading$|__name$|__question$|__subtitle$|__sub-?title$|__caption$|__author$|__text$|__desc(?:ription)?$|__answer$/.test(cls);
+  const rootBgAllow = /^\.lpc-block$|^\.lp-block(?:-bg|-overlay|_item|-bg_item)?$/.test(cls);
 
   // Цвет фона
-  if (role === "block_root" && profile.colors.pageBackground) {
+  if (role === "block_root" && profile.colors.pageBackground && rootBgAllow) {
     changes.background = {
       color: hexToRgbString(profile.colors.pageBackground),
       image: "none",
       bg_type: "solid",
     };
-  } else if (role === "card" && (profile.colors.secondaryBackground || profile.colors.pageBackground)) {
+  } else if (role === "card" && !isTextLike && (profile.colors.secondaryBackground || profile.colors.pageBackground)) {
     changes.background = {
       color: hexToRgbString(profile.colors.secondaryBackground || profile.colors.pageBackground),
       image: "none",
@@ -2252,13 +2434,30 @@ function buildChangesForRole(role, profile) {
     changes.font.family = fontFamilyWithFallback(targetFamily);
   }
 
+  // Жирность шрифта из профиля (размеры НЕ форсим — часто ломают визуальный ритм шаблонов)
+  if (role === "heading") {
+    if (profile.fonts.headingWeight) {
+      if (!changes.font) changes.font = {};
+      changes.font.weight = String(profile.fonts.headingWeight);
+    }
+  }
+  if (role === "body_text" || role === "subheading") {
+    if (profile.fonts.bodyWeight) {
+      if (!changes.font) changes.font = {};
+      changes.font.weight = String(profile.fonts.bodyWeight);
+    }
+  }
+
   // Скругления для карточек, кнопок и акцентных элементов
-  if ((role === "card" || role === "button" || role === "accent_element") && profile.radius.common != null) {
+  const radiusValue = role === "button"
+    ? (profile.radius.buttons != null ? profile.radius.buttons : profile.radius.common)
+    : profile.radius.common;
+  if ((role === "card" || role === "button" || role === "accent_element") && radiusValue != null) {
     changes.border_radius = {
-      lt: profile.radius.common,
-      rt: profile.radius.common,
-      rb: profile.radius.common,
-      lb: profile.radius.common,
+      lt: radiusValue,
+      rt: radiusValue,
+      rb: radiusValue,
+      lb: radiusValue,
     };
   }
 
@@ -2285,7 +2484,7 @@ function buildCssPayloadForBlock(block, profile) {
         if (!classData || typeof classData !== "object") continue;
         const role = classifyCssClass(className);
         if (role === "other") continue;
-        const changes = buildChangesForRole(role, profile);
+        const changes = buildChangesForRole(role, profile, className);
         if (changes) {
           if (!result[tKey]) result[tKey] = {};
           result[tKey][className] = { ...(result[tKey][className] || {}), ...changes };
@@ -2301,18 +2500,16 @@ function buildCssPayloadForBlock(block, profile) {
     for (const className of scanned.classNames) {
       const role = classifyCssClass(className);
       if (role === "other") continue;
-      const changes = buildChangesForRole(role, profile);
+      const changes = buildChangesForRole(role, profile, className);
       if (!changes) continue;
-      // Не перезаписываем то что уже добавлено в шаге 1
-      if (!result[themeKey][className]) {
-        result[themeKey][className] = changes;
-      }
+      // Сканированные классы имеют приоритет: дообогащают/уточняют то, что было в шаге 1.
+      result[themeKey][className] = { ...(result[themeKey][className] || {}), ...changes };
     }
   } else {
     // Шаг 3: запасной — банк типичных классов
     // Используется только если у блока нет сканированных классов
     for (const entry of COMMON_BLOCK_CLASSES) {
-      const changes = buildChangesForRole(entry.role, profile);
+      const changes = buildChangesForRole(entry.role, profile, entry.className);
       if (!changes) continue;
       const filtered = {};
       if (entry.apply.includes("background") && changes.background) filtered.background = changes.background;
@@ -2404,20 +2601,79 @@ async function scanBlocksOnPage() {
   const foundBlockIds = Object.keys(blockMap);
   log(`✓ найдено блоков в превью: ${foundBlockIds.length}`);
 
+  const loadedById = new Map(loadedBlocks.map(b => [String(b.block_id), b]));
+  const loadedByLayout = new Map();
+  loadedBlocks.forEach(b => {
+    const lk = String(b.layout_id || b.block_layout_id || b.layout || "");
+    if (!lk) return;
+    if (!loadedByLayout.has(lk)) loadedByLayout.set(lk, []);
+    loadedByLayout.get(lk).push(b);
+  });
+
+  const scannedEntries = foundBlockIds.map(key => ({ key, data: blockMap[key] || {} }));
+  scannedEntries.sort((a, b) => (a.data.domIndex ?? 0) - (b.data.domIndex ?? 0));
+
+  const normalized = {};
+  const usedLoadedIds = new Set();
+  const consumedRawKeys = new Set();
+
+  const tryMatchLoadedBlock = (rawId, scannedData) => {
+    if (loadedById.has(String(rawId))) return loadedById.get(String(rawId));
+    const layoutId = String(scannedData?.layoutId || "");
+    if (layoutId && loadedByLayout.has(layoutId)) {
+      const candidates = loadedByLayout.get(layoutId).filter(b => !usedLoadedIds.has(String(b.block_id)));
+      if (candidates.length === 1) return candidates[0];
+    }
+    return null;
+  };
+
   // Сохраняем результат
   if (!scannedBlockClasses[variant_id]) scannedBlockClasses[variant_id] = {};
   let totalClasses = 0;
   let matched = 0;
-  for (const blockId of foundBlockIds) {
-    scannedBlockClasses[variant_id][blockId] = {
-      classNames: blockMap[blockId].classNames || [],
+  for (const { key: rawId, data } of scannedEntries) {
+    const matchedBlock = tryMatchLoadedBlock(rawId, data);
+    const targetBlockId = matchedBlock ? String(matchedBlock.block_id) : String(rawId);
+    normalized[targetBlockId] = {
+      classNames: data.classNames || [],
+      layoutId: data.layoutId || null,
+      source: data.source || "unknown",
       scannedAt: Date.now(),
     };
-    totalClasses += blockMap[blockId].classNames.length;
-    // Сопоставляем со списком загруженных блоков
-    if (loadedBlocks.find(b => String(b.block_id) === String(blockId))) {
+    totalClasses += (data.classNames || []).length;
+    if (matchedBlock) {
+      matched++;
+      usedLoadedIds.add(String(matchedBlock.block_id));
+      consumedRawKeys.add(String(rawId));
+    }
+  }
+
+  // Fallback: если id/layout не дали совпадений, маппим оставшиеся блоки по порядку.
+  if (matched < loadedBlocks.length) {
+    const unmatchedLoaded = loadedBlocks.filter(b => !usedLoadedIds.has(String(b.block_id)));
+    const unmatchedScanned = scannedEntries.filter(se => !consumedRawKeys.has(String(se.key)));
+    const n = Math.min(unmatchedLoaded.length, unmatchedScanned.length);
+    for (let i = 0; i < n; i++) {
+      const lb = unmatchedLoaded[i];
+      const se = unmatchedScanned[i];
+      normalized[String(lb.block_id)] = {
+        classNames: se.data.classNames || [],
+        layoutId: se.data.layoutId || null,
+        source: `${se.data.source || "unknown"}+order`,
+        scannedAt: Date.now(),
+      };
+      usedLoadedIds.add(String(lb.block_id));
       matched++;
     }
+  }
+
+  for (const [blockId, data] of Object.entries(normalized)) {
+    scannedBlockClasses[variant_id][blockId] = {
+      classNames: data.classNames || [],
+      layoutId: data.layoutId || null,
+      source: data.source || "unknown",
+      scannedAt: Date.now(),
+    };
   }
   await saveScannedClasses();
 
