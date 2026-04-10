@@ -1921,8 +1921,6 @@ function renderStyleProfilePreview() {
     log(`🗑 удалён стилевой профиль для ${domain}`);
   });
 
-  $("genAltImagesBtn")?.addEventListener("click", generateImagesFromAltFields);
-
   // v1.3: сканирование классов блоков из iframe редактора
   $("styleScanBtn")?.addEventListener("click", scanBlocksOnPage);
 
@@ -2145,6 +2143,7 @@ async function downloadGeneratedImage(imageResp, altText) {
 }
 
 async function generateImagesFromAltFields() {
+  log(`\n=== КНОПКА: ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЙ ПО ALT ===`);
   const apiKey = $("geminiImageApiKey")?.value.trim() || $("apiKey")?.value.trim();
   const model = $("geminiImageModel")?.value.trim() || "imagen-4.0-generate-001";
   if (!apiKey) return log("⚠ Укажи Gemini API key (общий или для Imagen) в настройках.");
@@ -2185,6 +2184,10 @@ async function generateImagesFromAltFields() {
   }
   log(`✓ готово: ${ok}/${altItems.length} файлов.`);
 }
+
+// Вешаем обработчик отдельно от рендера профиля,
+// чтобы кнопка работала даже когда профиль ещё не снят/не отрисован.
+$("genAltImagesBtn")?.addEventListener("click", generateImagesFromAltFields);
 
 // ================================================================
 //      v1.1: ПРИМЕНЕНИЕ СТИЛЕЙ К БЛОКАМ (РЕАЛЬНОЕ API)
