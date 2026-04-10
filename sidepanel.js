@@ -2463,6 +2463,16 @@ function buildIndentsPatch(existingIndents, role, profile, className = "") {
   return Object.keys(patch).length ? patch : null;
 }
 
+function buildIndentsFromTemplate(templateKeys, role, profile, className = "") {
+  const { spacingHarmony } = getDesignerModeFlags();
+  if (!spacingHarmony) return null;
+  if (!Array.isArray(templateKeys) || templateKeys.length === 0) return null;
+  const temp = {};
+  templateKeys.forEach(k => { temp[k] = 0; });
+  const patch = buildIndentsPatch(temp, role, profile, className);
+  return patch;
+}
+
 // Извлечь альфу из существующего цвета (rgba) — нужно чтобы сохранить
 // прозрачность когда подменяем цвет.
 function extractAlpha(colorStr) {
@@ -2589,7 +2599,7 @@ const COMMON_BLOCK_CLASSES = [
 ];
 
 // Создаёт изменения для одного класса исходя из его роли
-function buildChangesForRole(role, profile, className = "", existingClassData = null) {
+function buildChangesForRole(role, profile, className = "", existingClassData = null, indentsTemplateKeys = null) {
   const changes = {};
   const cls = String(className || "").toLowerCase();
   const isTextLike = /__title$|__heading$|__name$|__question$|__subtitle$|__sub-?title$|__caption$|__author$|__text$|__desc(?:ription)?$|__answer$/.test(cls);
@@ -2699,8 +2709,11 @@ function buildChangesForRole(role, profile, className = "", existingClassData = 
   }
 
   const indentsPatch = buildIndentsPatch(existingClassData?.indents, role, profile, className);
-  if (indentsPatch) {
-    changes.indents = { ...(existingClassData?.indents || {}), ...indentsPatch };
+  const indentsFromTemplate = !indentsPatch
+    ? buildIndentsFromTemplate(indentsTemplateKeys, role, profile, className)
+    : null;
+  if (indentsPatch || indentsFromTemplate) {
+    changes.indents = { ...(existingClassData?.indents || {}), ...(indentsPatch || indentsFromTemplate) };
   }
 
   return Object.keys(changes).length > 0 ? changes : null;
@@ -2802,6 +2815,7 @@ function buildCssPayloadForBlock(block, profile) {
 
   const themeKey = `theme_${block.layout_id}`;
   const result = { [themeKey]: {} };
+  let indentsTemplateKeys = [];
 
   // Шаг 1: применяем к классам которые УЖЕ есть в css_settings (если есть)
   const cssSettings = getBlockCssSettings(block);
@@ -2810,10 +2824,13 @@ function buildCssPayloadForBlock(block, profile) {
       if (!themeData || typeof themeData !== "object") continue;
       for (const [className, classData] of Object.entries(themeData)) {
         if (!classData || typeof classData !== "object") continue;
+        if (!indentsTemplateKeys.length && classData.indents && typeof classData.indents === "object") {
+          indentsTemplateKeys = Object.keys(classData.indents);
+        }
         const role = classifyCssClass(className);
         const changes = role === "other"
           ? buildFallbackChangesFromExistingClass(className, classData, profile)
-          : buildChangesForRole(role, profile, className, classData);
+          : buildChangesForRole(role, profile, className, classData, indentsTemplateKeys);
         if (changes) {
           if (!result[tKey]) result[tKey] = {};
           result[tKey][className] = { ...(result[tKey][className] || {}), ...changes };
@@ -2822,6 +2839,9 @@ function buildCssPayloadForBlock(block, profile) {
     }
   }
 
+  const targetThemeKeys = Object.keys(result).filter(k => /^theme_/.test(k));
+  const applyThemes = targetThemeKeys.length ? targetThemeKeys : [themeKey];
+
   // Шаг 2: используем сканированные классы (если есть для этого блока)
   // Это самый точный источник — реальные классы которые рендерятся в превью
   const scanned = getScannedClassesForBlock(block.block_id);
@@ -2829,24 +2849,31 @@ function buildCssPayloadForBlock(block, profile) {
     for (const className of scanned.classNames) {
       const role = classifyCssClass(className);
       if (role === "other") continue;
-      const changes = buildChangesForRole(role, profile, className, null);
+      const changes = buildChangesForRole(role, profile, className, null, indentsTemplateKeys);
       if (!changes) continue;
       // Сканированные классы имеют приоритет: дообогащают/уточняют то, что было в шаге 1.
-      result[themeKey][className] = { ...(result[themeKey][className] || {}), ...changes };
+      for (const tk of applyThemes) {
+        if (!result[tk]) result[tk] = {};
+        result[tk][className] = { ...(result[tk][className] || {}), ...changes };
+      }
     }
   } else {
     // Шаг 3: запасной — банк типичных классов
     // Используется только если у блока нет сканированных классов
     for (const entry of COMMON_BLOCK_CLASSES) {
-      const changes = buildChangesForRole(entry.role, profile, entry.className, null);
+      const changes = buildChangesForRole(entry.role, profile, entry.className, null, indentsTemplateKeys);
       if (!changes) continue;
       const filtered = {};
       if (entry.apply.includes("background") && changes.background) filtered.background = changes.background;
       if (entry.apply.includes("font") && changes.font) filtered.font = changes.font;
       if (entry.apply.includes("border_radius") && changes.border_radius) filtered.border_radius = changes.border_radius;
+      if (changes.indents) filtered.indents = changes.indents;
       if (Object.keys(filtered).length === 0) continue;
-      if (!result[themeKey][entry.className]) {
-        result[themeKey][entry.className] = filtered;
+      for (const tk of applyThemes) {
+        if (!result[tk]) result[tk] = {};
+        if (!result[tk][entry.className]) {
+          result[tk][entry.className] = filtered;
+        }
       }
     }
   }
