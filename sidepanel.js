@@ -2875,23 +2875,20 @@ function buildCssPayloadForBlock(block, profile) {
   if (cssSettings && typeof cssSettings === "object") {
     for (const [tKey, themeData] of Object.entries(cssSettings)) {
       if (!themeData || typeof themeData !== "object") continue;
+      if (!result[tKey]) result[tKey] = {};
       for (const [className, classData] of Object.entries(themeData)) {
         if (!classData || typeof classData !== "object") continue;
-        // Если есть реальные scanned-классы, не применяем "мусорные" классы
-        // из прошлых fallback-итераций, которых нет в реальном DOM.
-        if (hasScanned) {
-          const allowGlobal = /^\.lp-block(?:-bg|-overlay|_item|-bg_item)?$/.test(className);
-          if (!allowGlobal && !scannedSet.has(String(className))) continue;
-        }
         if (!indentsTemplateKeys.length && classData.indents && typeof classData.indents === "object") {
           indentsTemplateKeys = Object.keys(classData.indents);
         }
+        // Если scanned есть — шаг 1 используем только чтобы вытащить theme/indents шаблоны,
+        // но НЕ вносим изменения по старым cssSettings классам (они часто "загрязнены").
+        if (hasScanned) continue;
         const role = classifyCssClass(className);
         const changes = role === "other"
           ? buildFallbackChangesFromExistingClass(className, classData, profile)
           : buildChangesForRole(role, profile, className, classData, indentsTemplateKeys);
         if (changes) {
-          if (!result[tKey]) result[tKey] = {};
           result[tKey][className] = { ...(result[tKey][className] || {}), ...changes };
         }
       }
@@ -3169,6 +3166,15 @@ async function applyStyleProfileToBlocks(blocks, profile, options = {}) {
     } catch (e) {
       log(`⚠ автоскан не удался: ${e.message}`);
     }
+  }
+  const scannedReadyAfter = blocks.filter(b => {
+    const s = getScannedClassesForBlock(b.block_id);
+    return s?.classNames?.length > 0;
+  }).length;
+  if (scannedReadyAfter === 0) {
+    log(`⚠ После автоскана нет ни одного блока с реальными классами. Применение будет неточным (fallback).`);
+  } else {
+    log(`🔍 Блоков с реальными scanned-классами: ${scannedReadyAfter}/${blocks.length}`);
   }
 
   // Создаём резервную копию ДО применения
